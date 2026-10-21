@@ -716,12 +716,12 @@ export function toPayload(s, { formVersion, sigFiles }) {
   addPhotos(s.photos.seals, 'photo_seals');
   addPhotos(s.photos.other, 'photo_other');
 
-  // remarks for ops that have no own field in the contract
-  const extraRem = [];
-  if (sv.listSide && sv.listSide !== 'U' && num(sv.list) != null) extraRem.push(`List ${fx(num(sv.list), 1)}° to ${sv.listSide === 'P' ? 'port' : 'starboard'}.`);
-  act0.forEach((g) => { const c = num(s.after.consumed[g]); if (c) extraRem.push(`${g} consumed during bunkering: ${fx(c, 2)} MT.`); });
-  s.audit.forEach((a) => extraRem.push(`${a.label} unlocked after signing (${a.at}): ${a.reason}.`));
-  const surveyorRemarks = [String(s.bdn.remSurveyor || '').trim(), ...extraRem].filter(Boolean).join('\n');
+  // fields without a place in contract gbqs.forms/1 (yet) -> extra (not in the remarks)
+  const extra = {
+    list_side: { P: 'port', S: 'starboard', U: 'upright' }[sv.listSide] || null,
+    consumed_during_bunkering_mt: Object.fromEntries(act0.map((g) => [g, nn(s.after.consumed[g])]).filter(([, v]) => v != null)),
+    unlock_log: s.audit.map((a) => ({ part: a.label, reason: a.reason, at: a.at })),
+  };
 
   const imoFix = gc.find((x) => x.field === 'imo_number');
   const payload = {
@@ -737,7 +737,7 @@ export function toPayload(s, { formVersion, sigFiles }) {
       owner: str(o.owner), charterer: str(o.charterer), po_number: str(o.po),
       draft_fwd_m: nn(sv.draftFwd), draft_aft_m: nn(sv.draftAft), list_deg: sv.listSide === 'U' ? 0 : nn(sv.list),
       logbook: Object.fromEntries(act0.map((g) => [g, nn(s.before.logbook[g])])),
-      master_remarks: String(s.bdn.remMaster || ''), surveyor_remarks: surveyorRemarks, timesheet_remarks: String(s.ts.remarks || ''),
+      master_remarks: String(s.bdn.remMaster || ''), surveyor_remarks: String(s.bdn.remSurveyor || '').trim(), timesheet_remarks: String(s.ts.remarks || ''),
       overall_condition: null, conclusion: null,
     },
     grades: act0,
@@ -751,6 +751,7 @@ export function toPayload(s, { formVersion, sigFiles }) {
     condition_items: [],
     damages: [],
     photos,
+    extra,
   };
   return { payload, fileIds: [...fileIds] };
 }

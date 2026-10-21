@@ -47,7 +47,8 @@ export function weigh(tov, temp, rhoKgl) {
 }
 
 /** Plausibility ranges for the inline "= value" preview */
-export const RANGE = { dens: [0.8, 1.01, '0.8000–1.0100 kg/l at 15 °C'], temp: [0, 80, '0–80 °C'], draft: [0, 25, '0–25 m'], deg: [0, 15, '0–15°'] };
+export const RANGE = { dens: [0.8, 1.01, '0.8000–1.0100 kg/l at 15 °C'], temp: [0, 80, '0–80 °C'], draft: [0, 25, '0–25 m'], deg: [0, 15, '0–15°'], ropes: [0, 40, '0–40 ropes'], jobs: [0, 200, '0–200 jobs'] };
+export const isInt = (v) => { const p = parseNum(v); return p.n != null && p.dec === 0; };
 
 /** IMO number: 7 digits; check digit = last digit of (d1*7 + d2*6 + ... + d6*2) */
 export function imoOk(v) {

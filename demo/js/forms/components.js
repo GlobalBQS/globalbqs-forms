@@ -32,6 +32,7 @@ export function numCheck(path, kind) {
   const p = parseNum(getPath(path), kind === 'signed');
   if (p.empty) return null;
   if (p.err) return { err: p.err };
+  if ((kind === 'ropes' || kind === 'jobs') && p.dec > 0) return { err: 'Enter a whole number.' };
   let warn = ''; const r = RANGE[kind];
   if (kind === 'dens' && p.n > 2) warn = 'Enter the density in kg/l, e.g. 0.9870.';
   else if (r && (p.n < r[0] || p.n > r[1])) warn = 'Outside ' + r[2] + '. Check the figure.';
@@ -45,7 +46,7 @@ export function field(label, path, o = {}) {
   const miss = o.req && (v === '' || v == null);
   const kind = o.kind || 'n';
   return `<div class="field ${o.cls || ''}"><label for="${id}">${label}${o.opt ? ' <span class="opt">(optional)</span>' : ''}</label>
-  <div class="ctl${o.unit ? ' has-unit' : ''}"><input id="${id}" class="${o.numeric ? 'num' : ''}${miss ? ' miss' : ''}" data-bind="${path}" type="${o.type || 'text'}" ${o.numeric ? `inputmode="${kind === 'signed' ? 'text' : 'decimal'}" data-num="${kind}"` : ''} enterkeyhint="next" value="${esc(v)}" ${o.ph ? `placeholder="${esc(o.ph)}"` : ''} autocomplete="off" ${o.req ? 'data-req="1"' : ''} ${o.max ? `maxlength="${o.max}"` : ''}>${o.unit ? `<span class="unit">${o.unit}</span>` : ''}</div>
+  <div class="ctl${o.unit ? ' has-unit' : ''}"><input id="${id}" class="${o.numeric ? 'num' : ''}${miss ? ' miss' : ''}" data-bind="${path}" type="${o.type || 'text'}" ${o.numeric ? `inputmode="${kind === 'signed' ? 'text' : kind === 'ropes' || kind === 'jobs' ? 'numeric' : 'decimal'}" data-num="${kind}"` : ''} enterkeyhint="next" value="${esc(v)}" ${o.ph ? `placeholder="${esc(o.ph)}"` : ''} autocomplete="off" ${o.req ? 'data-req="1"' : ''} ${o.max ? `maxlength="${o.max}"` : ''}>${o.unit ? `<span class="unit">${o.unit}</span>` : ''}</div>
   ${o.numeric ? `<p class="pv" data-pv="${path}" data-kind="${kind}" aria-live="polite"></p>` : ''}
   ${o.hint ? `<p class="hint">${o.hint}</p>` : ''}</div>`;
 }
@@ -243,4 +244,23 @@ export function flagList(F) {
 export function offsetPicker(path, OFFSETS, deviceOff) {
   const v = getPath(path) || '';
   return `<div class="field"><label for="${idOf(path)}">Local time of the port (UTC offset)</label><div class="ctl"><select id="${idOf(path)}" data-bind="${path}" data-req="1" class="${v ? '' : 'miss'}"><option value="">Choose…</option>${OFFSETS.map((o) => `<option value="${o}" ${o === v ? 'selected' : ''}>UTC${o}${o === deviceOff ? ' (this device)' : ''}</option>`).join('')}</select></div><p class="hint">The port's UTC offset is not known to GlobalBQS. Choose it once; all times in this survey are local time (LT) with this offset.</p></div>`;
+}
+
+// ---------- start-check corrections (shared by all forms) ----------
+/** gate answers -> contract gate_corrections. nominated: [[grade, nominatedQty]] shown in the grades check */
+export function gateCorrectionsFrom(s, nominated = []) {
+  const G = s.gate || {}, a = G.answers || {}, f = G.fix || {}, o = s.order, out = [];
+  if (a.vessel === 'n') {
+    if (f.vessel != null && String(f.vessel).trim() && f.vessel.trim() !== o.vessel) out.push({ field: 'vessel_name', expected_value: o.vessel || null, corrected_value: f.vessel.trim(), expected_survey_type: null, remark: null });
+    if (f.imo != null && String(f.imo).trim() && String(f.imo).trim() !== o.imo) out.push({ field: 'imo_number', expected_value: o.imo || null, corrected_value: String(f.imo).trim(), expected_survey_type: null, remark: null });
+  }
+  if (a.type === 'n' && f.typeExp) out.push({ field: 'survey_type', expected_value: o.type || null, corrected_value: null, expected_survey_type: f.typeExp, remark: f.typeNote || null });
+  if (a.grades === 'n') {
+    const nom = Object.fromEntries(nominated);
+    Object.keys(f).filter((k) => k.startsWith('g_') && String(f[k]).trim()).forEach((k) => {
+      const g = k.slice(2); out.push({ field: 'grade_' + g, expected_value: nom[g] ? nom[g] + ' MT' : null, corrected_value: String(f[k]).trim(), expected_survey_type: null, remark: null });
+    });
+    if (String(f.gradesNote || '').trim()) out.push({ field: 'grades', expected_value: null, corrected_value: null, expected_survey_type: null, remark: f.gradesNote.trim() });
+  }
+  return out;
 }

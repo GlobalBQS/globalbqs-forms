@@ -366,6 +366,7 @@ V.check = async (id) => {
     ['grades', 'Grades and quantities as nominated?', () => `<span class="big">${esc(gl.map(([gg, q]) => gg + (q ? ' ' + q + ' MT' : '')).join(' · ') || '—')}</span><span class="muted small">Compare with the supplier's delivery documents.</span>`,
       () => gl.map(([gg, q]) => fin('g_' + gg, `${gg} as stated on board (nominated: ${q ? q + ' MT' : '—'})`, g.fix['g_' + gg] ?? '', { mono: 1 })).join('') + `<label for="fx_gradesNote">Other difference <span class="muted">(optional)</span></label><textarea id="fx_gradesNote" data-fix="gradesNote">${esc(g.fix.gradesNote || '')}</textarea>`],
   ];
+  if (!gl.length) GATE.splice(2, 1); // no nominated grades/quantities for this survey type
   const allOk = () => GATE.every(([k]) => g.answers[k] === 'y' || (g.answers[k] === 'n' && fixOk(k)));
   const render = () => {
     const fixes = GATE.filter(([k]) => g.answers[k] === 'n').length;

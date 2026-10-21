@@ -64,7 +64,8 @@ export function mountForm(root, opts) {
     const L = form.issues(); const per = STEPS.map((_, i) => L.filter((x) => x.s === i).length), last = STEPS.length - 1, step = S.ui.step;
     $('#steps', root).innerHTML = STEPS.map((s, i) => {
       const st = per[i] ? 'open' : 'done'; const lastSt = i === last && per[i] === 0 && L.length ? 'open' : st;
-      return `<button type="button" class="${lastSt}" data-act="goto" data-i="${i}" data-keep ${i === step ? 'aria-current="step"' : ''}><span class="n">${per[i] || i === step ? i + 1 : '✓'}</span><span class="sl">${s.t}</span>${per[i] ? `<span class="cnt">${per[i]}</span>` : ''}</button>`;
+      const sep = s.part && (i === 0 || STEPS[i - 1].part !== s.part) ? `<span class="sep">${esc(s.partLabel || 'Part ' + s.part)}</span>` : '';
+      return sep + `<button type="button" class="${lastSt}" data-act="goto" data-i="${i}" data-keep ${i === step ? 'aria-current="step"' : ''}><span class="n">${per[i] || i === step ? i + 1 : '✓'}</span><span class="sl">${s.t}</span>${per[i] ? `<span class="cnt">${per[i]}</span>` : ''}</button>`;
     }).join('');
     $('#where', root).innerHTML = `Step <b>${step + 1}</b> of ${STEPS.length} · ${STEPS[step].t}`;
     const pb = $('#prevBtn', root); pb.disabled = step === 0; pb.style.visibility = step === 0 ? 'hidden' : 'visible';
@@ -189,7 +190,8 @@ export function mountForm(root, opts) {
       if (/^lops\.\d+\.dir$/.test(pth) && getPath(pth) !== v) { const l = getPath(pth.replace(/\.dir$/, '')); l.by = ''; l.to = ''; }
       if (form.beforeSet) form.beforeSet(pth, v);
       setPath(pth, v);
-      if (pth === 'bdn.lop' && v === 'yes' && !S.lops.length) S.lops.push(newLop(nextId()));
+      if (form.afterSet) form.afterSet(pth, v);
+      if ((pth === 'bdn.lop' || pth === 'lop') && v === 'yes' && !S.lops.length) S.lops.push(newLop(nextId()));
       markSaved(); render(false); return;
     }
     if (a === 'delTank') { const arr = getPath(`${b.dataset.phase}.tanks`); arr.splice(+b.dataset.i, 1); markSaved(); render(false); toast('Tank removed'); return; }
