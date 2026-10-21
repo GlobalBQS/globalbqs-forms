@@ -3,7 +3,7 @@
 // (vessel, fuel types & logbook, tank soundings, result) and the condition part (hull & main deck,
 // deck fittings & safety, cargo holds, engine room, damages & conclusion). Shared components from
 // components.js (tank rows, signatures with the "sign only when complete" rule, photos, LOP, review).
-import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS } from '../ui.js';
+import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js';
 import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
@@ -109,6 +109,8 @@ export function create(key) {
           ref: sv.gbqs_reference || '', vessel: ves.name || '', imo: ves.imo ? String(ves.imo) : '', place: port.place || port.name || '', port: port.name || '',
           etb: sch.etb || sch.eta || '', type: sv.survey_type_label || V.title, utcOffset: off, tol: p.tolerance_pct ?? p.client?.delivery_tolerance_pct ?? 0.5,
           client: p.client?.name || '', owner: par.owner || '', charterer: par.charterer || '', agent: par.agent || '', po: sv.po_number || '', instructions: sv.instructions || '',
+          charter: p.charter && typeof p.charter === 'object' ? p.charter : null,
+          onHire: p.on_hire_survey && typeof p.on_hire_survey === 'object' ? p.on_hire_survey : null,
         },
         survey: { registry: '', master: sv.master_name || '', chief: '', surveyor: p.surveyor?.name || '', date: '', time: '', draftFwd: '', draftAft: '', listSide: '', list: '', utcOffset: '' },
         VT, grades, holdItems: hi,
@@ -321,12 +323,36 @@ export function create(key) {
   const remarksCard = () => `<section class="card" data-lockphase="bunker"><div class="card-h"><h3>Remarks</h3></div>
     <div class="grid two">${area('Remarks Master / Chief Engineer', 'rem.master', { opt: 1 })}${area(V.kind === 'b221' ? 'Remarks surveyor' : 'Remarks bunker surveyor', 'rem.surveyor', { opt: 1, ph: 'E.g. all tanks sounded in presence of the C/E; FOT 2S not accessible.' })}</div></section>`;
 
+  // charter party + on-hire survey (prefill.charter / prefill.on_hire_survey), read-only; hidden when null
+  const dt = (v) => { const x = String(v || ''); return /^\d{4}-\d{2}-\d{2}/.test(x) ? fmtDate(x.slice(0, 10)) : x; };
+  const join = (...a) => a.map((x) => String(x ?? '').trim()).filter(Boolean).join(' · ');
+  function charterRows() {
+    if (V.kind === 'b221') return '';
+    const c = S().order.charter, h = S().order.onHire, out = [];
+    if (c) {
+      const cp = join(c.cp_date ? 'CP ' + dt(c.cp_date) : '', c.charter_type);
+      if (cp) out.push(['Charter party', cp]);
+      if (c.charterer) out.push(['Charterer (CP)', c.charterer]);
+      if (c.owner) out.push(['Owner (CP)', c.owner]);
+      const pl = OFF() ? join(c.redelivery_place, dt(c.redelivery_date)) : join(c.delivery_place, dt(c.delivery_date));
+      if (pl) out.push([(OFF() ? 'Redelivery' : 'Delivery') + ' (CP)', pl]);
+    }
+    if (OFF() && h) {
+      const txt = h.source === 'external'
+        ? join(h.report_number ? 'Report ' + h.report_number : 'External report', h.surveyor_company, dt(h.date), h.place)
+        : join(h.gbqs_reference, dt(h.date), h.place);
+      if (txt) out.push(['On-hire survey', txt]);
+    }
+    return out.map(([k, v]) => `<div data-charter><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
+  }
+
   const R = {};
   R.vessel = () => {
     const s = S(), o = s.order, off = portOffset();
     return `<section class="card order"><div class="card-h"><h3>From the order</h3><span class="lock">${ICON.lock} Set by GlobalBQS</span></div>
       <dl><div><dt>Reference</dt><dd class="mono">${esc(o.ref)}</dd></div><div><dt>Survey type</dt><dd>${esc(o.type)}</dd></div><div><dt>Client</dt><dd>${esc(o.client || '—')}</dd></div><div><dt>P.O. number / your ref</dt><dd class="mono">${esc(o.po || '—')}</dd></div>
       <div><dt>Vessel</dt><dd>${esc(o.vessel)}</dd></div><div><dt>IMO</dt><dd class="mono">${esc(o.imo || '—')}</dd></div><div><dt>Place of survey</dt><dd>${esc(o.place || '—')}</dd></div><div><dt>${HIRE ? 'ETA / ETB · ' + HIRE.toLowerCase() : 'ETA / ETB'}</dt><dd>${esc(o.etb || '—')}</dd></div>
+      ${charterRows()}
       <div><dt>Surveyor</dt><dd>${esc(s.survey.surveyor || '—')}</dd></div><div><dt>Owner</dt><dd>${esc(o.owner || '—')}</dd></div><div><dt>Charterer</dt><dd>${esc(o.charterer || '—')}</dd></div><div><dt>Agent</dt><dd>${esc(o.agent || '—')}</dd></div>
       <div><dt>Local time (LT)</dt><dd class="mono">${off ? 'UTC' + esc(off) : 'to be chosen'}</dd></div><div><dt>Form version</dt><dd class="mono">${V.version}</dd></div>
       <div><dt>Device</dt><dd>Open on this device; the draft is saved to GlobalBQS whenever there is a connection</dd></div></dl>

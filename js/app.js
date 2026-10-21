@@ -415,6 +415,8 @@ V.form = async (id) => {
   if (!form) { location.replace('#/job/' + id); return; }
   if (job.status === 'queued' || job.status === 'submitted') { location.replace('#/job/' + id + '/status'); return; }
   const S = await loadState(job, form);
+  // read-only order data always follows the latest prefill (charter party, on-hire survey)
+  if (job.prefill && S.order) { S.order.charter = job.prefill.charter ?? null; S.order.onHire = job.prefill.on_hire_survey ?? null; }
   await loadThumbs(id); await refreshFileStatus(id);
   if (cleanup) { try { cleanup(); } catch { /* */ } cleanup = null; }
   closeModal();
