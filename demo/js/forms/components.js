@@ -69,17 +69,43 @@ export function confirmBox(path, text, lockPh) {
 // ---------- signatures & locks ----------
 export const hasSig = (k) => !!(ctx.S.sig[k] && ctx.S.sig[k].strokes && ctx.S.sig[k].strokes.length);
 export const signed = (ph) => !!ctx.form.PHASE[ph] && ctx.form.PHASE[ph].keys.some(hasSig);
-function sigState(key, locked) {
+// ---------- signing rule (shared by all forms) ----------
+// A phase can only be signed when every section in PHASE[ph].steps is complete (0 open items, not counting
+// the signatures/confirmation themselves). So a signed section can never contain open items.
+export const phaseOf = (key) => Object.keys(ctx.form.PHASE).find((ph) => ctx.form.PHASE[ph].keys.includes(key)) || null;
+export function phaseOpen(ph) {
+  const P = ctx.form.PHASE[ph]; if (!P || !P.steps) return [];
+  return ctx.form.issues().filter((x) => !x.sign && P.steps.includes(ctx.form.STEPS[x.s]?.id));
+}
+/** why a signature pad is not usable: 'open' (section incomplete), 'confirm' (tick the confirmation), or null */
+export function sigLock(key, lockedBy) {
+  if (hasSig(key)) return null;
+  const ph = phaseOf(key);
+  if (ph && phaseOpen(ph).length) return 'open';
+  if (lockedBy && !getPath(lockedBy)) return 'confirm';
+  return null;
+}
+export const SIG_OPEN_MSG = 'Complete the open items in this section before signing';
+/** note with the open items (jump links) shown above the signature pads; live-updated via data-calc */
+export function sigGate(ph) { return `<div data-calc="siggate:${ph}">${sigGateHtml(ph)}</div>`; }
+export function sigGateHtml(ph) {
+  if (signed(ph)) return '';
+  const L = phaseOpen(ph);
+  if (!L.length) return '';
+  return `<div class="note warn">${ICON.warn}<div><b>${SIG_OPEN_MSG}.</b> ${L.length} open item${L.length > 1 ? 's' : ''}:
+    <ul class="issues" style="margin-top:8px">${L.map((x) => `<li><span><span class="st">${x.s + 1}</span>${esc(x.msg)}</span><button class="btn ghost small" type="button" data-act="goto" data-i="${x.s}" data-tab="${x.tab || ''}" data-keep>Go to</button></li>`).join('')}</ul></div></div>`;
+}
+export function sigState(key, lock) {
   const s = ctx.S.sig[key];
   if (s && s.strokes && s.strokes.length) return (s.mode === 'receipt' ? 'Signed for receipt only · ' : 'Signed · ') + s.at;
-  return locked ? 'Tick the confirmation first' : 'Sign with finger, stylus or mouse';
+  return lock === 'open' ? SIG_OPEN_MSG : lock === 'confirm' ? 'Tick the confirmation first' : 'Sign with finger, stylus or mouse';
 }
 export function sigPad(key, role, name, lockedBy) {
-  const s = hasSig(key), locked = lockedBy && !getPath(lockedBy);
-  return `<div class="sig${s ? ' signed' : ''}${locked ? ' locked' : ''}" data-sigwrap="${key}">
+  const s = hasSig(key), lock = sigLock(key, lockedBy), locked = !!lock;
+  return `<div class="sig${s ? ' signed' : ''}${locked ? ' locked' : ''}" data-sigwrap="${key}" data-lockedby="${lockedBy || ''}">
     <div class="sig-h"><span class="lbl">${role}</span><span class="who">${esc(name || '')}</span></div>
-    <canvas data-sig="${key}" ${locked ? 'data-locked="1"' : ''} role="img" aria-label="Signature pad, ${esc(role)}"></canvas>
-    <div class="sig-f"><span data-sigstate="${key}">${sigState(key, locked)}</span><button class="btn ghost small" type="button" data-act="sigClear" data-key="${key}">Clear</button></div></div>`;
+    <canvas data-sig="${key}" ${locked ? `data-locked="${lock}"` : ''} role="img" aria-label="Signature pad, ${esc(role)}"></canvas>
+    <div class="sig-f"><span data-sigstate="${key}">${sigState(key, lock)}</span><button class="btn ghost small" type="button" data-act="sigClear" data-key="${key}">Clear</button></div></div>`;
 }
 /** Vessel signature: sign normally, sign for receipt only, or record that the vessel did not sign */
 export function vSig(key, role, name, lockedBy) {
@@ -92,12 +118,12 @@ export function vSig(key, role, name, lockedBy) {
       ${photoBlock('vno_' + key, 'Photo (e.g. of a written remark)')}
       <button class="btn ghost small" type="button" data-act="vnoUndo" data-key="${key}" style="justify-self:start">Vessel signs after all</button></div>`;
   }
-  const s = hasSig(key), mode = S.smode[key] || 'sign', locked = lockedBy && !getPath(lockedBy);
-  return `<div class="sig${s ? ' signed' : ''}${mode === 'receipt' ? ' receipt' : ''}${locked ? ' locked' : ''}" data-sigwrap="${key}">
+  const s = hasSig(key), mode = S.smode[key] || 'sign', lock = sigLock(key, lockedBy), locked = !!lock;
+  return `<div class="sig${s ? ' signed' : ''}${mode === 'receipt' ? ' receipt' : ''}${locked ? ' locked' : ''}" data-sigwrap="${key}" data-lockedby="${lockedBy || ''}">
     <div class="sig-h"><span class="lbl">${role}</span><span class="who">${esc(name || '')}</span></div>
     ${mode === 'receipt' ? '<span class="pill warn" style="justify-self:start">For receipt only</span>' : ''}
-    <canvas data-sig="${key}" ${locked ? 'data-locked="1"' : ''} role="img" aria-label="Signature pad, ${esc(role)}"></canvas>
-    <div class="sig-f"><span data-sigstate="${key}">${sigState(key, locked)}</span><button class="btn ghost small" type="button" data-act="sigClear" data-key="${key}">Clear</button></div>
+    <canvas data-sig="${key}" ${locked ? `data-locked="${lock}"` : ''} role="img" aria-label="Signature pad, ${esc(role)}"></canvas>
+    <div class="sig-f"><span data-sigstate="${key}">${sigState(key, lock)}</span><button class="btn ghost small" type="button" data-act="sigClear" data-key="${key}">Clear</button></div>
     <div class="vbtns"><button class="btn ghost small" type="button" data-act="receipt" data-key="${key}" aria-pressed="${mode === 'receipt'}">Signed for receipt only</button><button class="btn ghost small" type="button" data-act="vno" data-key="${key}">Not signed by vessel</button></div></div>`;
 }
 export function lockBar(ph) {

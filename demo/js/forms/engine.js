@@ -2,7 +2,7 @@
 // signature pads, photos, timesheet drag & drop, and the generic actions shared by all forms.
 // A form module supplies: STEPS, PHASE, SIGLBL, R (step renderers), CALC, issues(), flags(), act(), title.
 import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js';
-import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop } from './components.js';
+import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG } from './components.js';
 import { parseNum } from './calc.js';
 
 export function mountForm(root, opts) {
@@ -39,7 +39,15 @@ export function mountForm(root, opts) {
 
   // ---------- render ----------
   function refresh() {
-    $$('[data-calc]', main).forEach((el) => { const [k, ...a] = el.dataset.calc.split(':'); if (form.CALC[k]) el.innerHTML = form.CALC[k](...a); });
+    $$('[data-calc]', main).forEach((el) => { const [k, ...a] = el.dataset.calc.split(':'); if (k === 'siggate') el.innerHTML = sigGateHtml(a[0]); else if (form.CALC[k]) el.innerHTML = form.CALC[k](...a); });
+    // signing rule: pads open only when the section is complete (live, without re-render)
+    $$('[data-sigwrap]', main).forEach((w) => {
+      const key = w.dataset.sigwrap, cv = w.querySelector('canvas[data-sig]'); if (!cv) return;
+      const lock = sigLock(key, w.dataset.lockedby || null);
+      if (lock) cv.dataset.locked = lock; else delete cv.dataset.locked;
+      w.classList.toggle('locked', !!lock);
+      const st = w.querySelector('[data-sigstate]'); if (st) st.textContent = sigState(key, lock);
+    });
     $$('[data-req]', main).forEach((el) => el.classList.toggle('miss', String(el.value).trim() === ''));
     $$('[data-pv]', main).forEach((el) => {
       const r = numCheck(el.dataset.pv, el.dataset.kind), inp = el.parentElement.querySelector('input[data-num]');
@@ -109,7 +117,7 @@ export function mountForm(root, opts) {
       const pt = (e) => { const r = cv.getBoundingClientRect(); return [Math.round((e.clientX - r.left) / r.width * 1000) / 1000, Math.round((e.clientY - r.top) / r.height * 1000) / 1000]; };
       cv.addEventListener('pointerdown', (e) => {
         if (ctx.readOnly) { toast('This copy is read-only.'); return; }
-        if (cv.dataset.locked) { toast('Tick the confirmation above first.'); return; }
+        if (cv.dataset.locked) { toast(cv.dataset.locked === 'open' ? SIG_OPEN_MSG + ' (see the list above).' : 'Tick the confirmation above first.'); return; }
         e.preventDefault(); try { cv.setPointerCapture(e.pointerId); } catch { /* */ } cur = [pt(e)];
       });
       cv.addEventListener('pointermove', (e) => { if (!cur) return; const p = pt(e), q = cur[cur.length - 1]; cur.push(p); c2.beginPath(); c2.moveTo(q[0] * w, q[1] * h); c2.lineTo(p[0] * w, p[1] * h); c2.stroke(); });

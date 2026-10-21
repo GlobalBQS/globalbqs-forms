@@ -4,7 +4,7 @@ import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS } from '../ui.
 import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
-  tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker,
+  tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker, sigGate,
 } from './components.js';
 
 export const key = 'bunker_delivery_survey';
@@ -31,9 +31,10 @@ export const STEPS = [
 ];
 const SI = (id) => STEPS.findIndex((s) => s.id === id);
 export const PHASE = {
-  before: { keys: ['beforeMaster', 'beforeSurveyor'], label: 'Before-bunkering figures', confirm: 'before.confirm' },
-  final: { keys: ['finalMaster', 'finalSurveyor'], label: 'Final figures', confirm: 'bdn.confirm' },
-  ts: { keys: ['ts'], label: 'Timesheet', confirm: null },
+  // steps: the sections that must be complete (0 open items) before this phase can be signed
+  before: { keys: ['beforeMaster', 'beforeSurveyor'], label: 'Before-bunkering figures', confirm: 'before.confirm', steps: ['stem', 'before'] },
+  final: { keys: ['finalMaster', 'finalSurveyor'], label: 'Final figures', confirm: 'bdn.confirm', steps: ['after', 'bdn', 'result'] },
+  ts: { keys: ['ts'], label: 'Timesheet', confirm: null, steps: ['time'] },
 };
 export const SIGLBL = { beforeMaster: 'Master / C/E, before bunkering', beforeSurveyor: 'Surveyor, before bunkering', finalMaster: 'Master / C/E, final figures', finalSurveyor: 'Surveyor, final figures', ts: 'Master / C/E, timesheet' };
 
@@ -179,9 +180,9 @@ const smpTxt = (d) => { const L = []; [['marpol', 'MARPOL'], ['ship', 'Ship'], [
 
 // ---------- open items (drive step status + submit) ----------
 export function issues() {
-  const L = []; const add = (id, msg, tab) => L.push({ s: SI(id), msg, tab: tab || null });
+  const L = []; const add = (id, msg, tab, sign) => L.push({ s: SI(id), msg, tab: tab || null, sign: !!sign });
   const s = S();
-  const needSig = (id, k) => { if (s.vno[k]) { if (!String(s.vno[k].reason || '').trim()) add(id, 'Reason the vessel did not sign (' + SIGLBL[k] + ')'); } else if (!hasSig(k)) add(id, 'Signature ' + SIGLBL[k]); };
+  const needSig = (id, k) => { if (s.vno[k]) { if (!String(s.vno[k].reason || '').trim()) add(id, 'Reason the vessel did not sign (' + SIGLBL[k] + ')', null, true); } else if (!hasSig(k)) add(id, 'Signature ' + SIGLBL[k], null, true); };
   const sv = s.survey;
   if (!portOffset()) add('vessel', 'Local time of the port (UTC offset)');
   if (!sv.master) add('vessel', 'Name of the Master');
@@ -238,7 +239,7 @@ export function issues() {
       else if (d.by === 'pipeline') { if (!d.pipe.meter) add('before', n + ': meter ID', 'sup'); if (num(d.pipe.b) == null) add('before', n + ': meter reading before', 'sup'); if (num(d.pipe.a) == null) add('after', n + ': meter reading after', 'sup'); }
     });
   }
-  if (!s.before.confirm) add('before', 'Confirmation of the figures before bunkering');
+  if (!s.before.confirm) add('before', 'Confirmation of the figures before bunkering', null, true);
   needSig('before', 'beforeMaster'); needSig('before', 'beforeSurveyor');
   if (!s.bdn.lop) add('result', 'Was a Letter of Protest issued?');
   if (s.bdn.lop === 'yes') {
@@ -251,7 +252,7 @@ export function issues() {
       if (!(s.photos['lop_' + l.id] || []).length) add('result', n + ': photo of the signed LOP');
     });
   }
-  if (!s.bdn.confirm) add('result', 'Confirmation of the final figures');
+  if (!s.bdn.confirm) add('result', 'Confirmation of the final figures', null, true);
   needSig('result', 'finalMaster'); needSig('result', 'finalSurveyor');
   if (!s.ts.location) add('time', 'Bunker location');
   s.ts.events.forEach((e) => { if ((e.key || e.custom) && (!e.t || !e.d)) add('time', 'Date and time: ' + e.label.toLowerCase()); });
@@ -396,6 +397,7 @@ R.before = () => {
   const s = S(), sv = s.survey;
   return lockBar('before') + tabBar('before') + (s.ui.tab.before === 'sup' ? supTab('before') : active().map((g) => phaseGroup('before', g)).join('') + CALC_NOTE) +
   `<section class="card"><div class="card-h"><h3>Sign before bunkering starts</h3></div>
+    ${sigGate('before')}
     ${confirmBox('before.confirm', 'Master / Chief Engineer and surveyor confirm the figures before bunkering are true and correct.', 'before')}
     <div class="sigs">${vSig('beforeMaster', 'Master / Chief Engineer', sv.chief || sv.master, 'before.confirm')}${sigPad('beforeSurveyor', 'Bunker surveyor', sv.surveyor, 'before.confirm')}</div></section>`;
 };
@@ -423,6 +425,7 @@ R.result = () => {
   <section class="card" data-lockphase="final"><div class="card-h"><h3>Remarks</h3></div>
     <div class="grid two">${area('Remarks Master / Chief Engineer', 'bdn.remMaster', { opt: 1 })}${area('Remarks surveyor', 'bdn.remSurveyor', { opt: 1, ph: 'E.g. delivery witnessed in full, samples drawn at the vessel manifold.' })}</div></section>
   <section class="card"><div class="card-h"><h3>Sign the final figures</h3></div>
+    ${sigGate('final')}
     ${confirmBox('bdn.confirm', 'Master / Chief Engineer and surveyor confirm the final figures are true and correct.', 'final')}
     <div class="sigs">${vSig('finalMaster', 'Master / Chief Engineer', sv.chief || sv.master, 'bdn.confirm')}${sigPad('finalSurveyor', 'Bunker surveyor', sv.surveyor, 'bdn.confirm')}</div></section>`;
 };
@@ -436,6 +439,7 @@ R.time = () => {
   <section class="card" data-lockphase="ts"><div class="card-h"><h3>Events · LT (${off})</h3><span data-calc="pump"></span><button class="btn ghost small" type="button" data-act="sortTs">Sort by time</button></div><p class="hint">Drag ⋮⋮ or use ↑ ↓ to change the order.</p><div class="ts" id="tslist">${tsRows(s.ts.events)}</div>${addEv}
     <p class="hint">All times are local time of ${esc(s.order.port || 'the port')} (${off}), with the date, so a night shift counts correctly. Key events feed the pump rate in the vessel and supplier scorecards.</p></section>
   <section class="card"><div data-lockphase="ts">${area('Remarks timesheet', 'ts.remarks', { opt: 1, ph: 'Delays, stoppages and their reason.' })}</div>
+    ${sigGate('ts')}
     <div class="sigs">${vSig('ts', 'Master / Chief Engineer', sv.chief || sv.master)}</div></section>`;
 };
 R.submit = () => `
