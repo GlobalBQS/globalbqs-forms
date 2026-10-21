@@ -1,0 +1,10 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>GlobalBQS Forms</title>
+<script>
+// Fallback for hosts without a 404 rewrite: links of the form /j/?<token>, /j/?t=<token> or /j/#<token>.
+(function(){
+  var s = location.search + ' ' + location.hash + ' ' + location.pathname, m = /([0-9a-fA-F]{64})/.exec(s);
+  var base = location.pathname.replace(/j\/.*$/, '');
+  location.replace(base + (m ? '#/j/' + m[1].toLowerCase() : ''));
+})();
+</script></head><body style="font-family:sans-serif;padding:24px">Opening the job… <a href="../">Continue</a></body></html>

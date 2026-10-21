@@ -1,0 +1,15 @@
+# Apache: GlobalBQS Forms
+<IfModule mod_headers.c>
+  <Files "sw.js">
+    Header set Cache-Control "no-cache, no-store, must-revalidate"
+  </Files>
+  <Files "index.html">
+    Header set Cache-Control "no-cache"
+  </Files>
+</IfModule>
+AddType application/manifest+json .webmanifest
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteRule ^(.*/)?j/([0-9a-fA-F]{64})/?$ /$1#/j/$2 [R=302,NE,L]
+</IfModule>
+ErrorDocument 404 /404.html

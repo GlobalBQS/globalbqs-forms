@@ -1,0 +1,235 @@
+// Sync engine: draft push (debounced, with rev), file uploads (register -> PUT -> confirm) and the outbox
+// (files first, then submit; idempotent client ids; retry with backoff). Emits events on `bus`.
+import * as db from './db.js';
+import { call, putFile, ApiError } from './api.js';
+
+export const bus = new EventTarget();
+const emit = (type, detail) => bus.dispatchEvent(new CustomEvent(type, { detail }));
+
+const BACKOFF = [5, 15, 30, 60, 120, 300, 600]; // seconds
+const nextDelay = (n) => BACKOFF[Math.min(n, BACKOFF.length - 1)] * 1000;
+const READ_ONLY_CODES = { revoked: 'taken_over', not_active_device: 'not_active_device', job_closed: 'job_closed', cancelled: 'cancelled' };
+
+export const online = () => navigator.onLine !== false;
+
+/** Mark a job read-only after the server said so (revoked / not active / closed). */
+export async function markReadOnly(jobId, code, data = {}) {
+  const reason = code === 'revoked' ? (data.reason || 'taken_over') : (READ_ONLY_CODES[code] || code);
+  const job = await db.update('jobs', jobId, (j) => (j ? { ...j, read_only: true, read_only_reason: reason } : undefined));
+  emit('readonly', { jobId, reason, job });
+  return job;
+}
+
+async function handleAuthError(jobId, e) {
+  if (!(e instanceof ApiError)) return false;
+  if (READ_ONLY_CODES[e.code]) { await markReadOnly(jobId, e.code, e.data); return true; }
+  if (e.code === 'invalid_session' || e.code === 'missing_token') {
+    await db.update('jobs', jobId, (j) => (j ? { ...j, session: null, needs_sign_in: true } : undefined));
+    emit('signin', { jobId });
+    return true;
+  }
+  return false;
+}
+
+// ---------- local draft ----------
+export async function saveLocal(jobId, state) {
+  const cur = await db.get('drafts', jobId);
+  const rec = { job_id: jobId, state, local_rev: (cur?.local_rev || 0) + 1, saved_at: new Date().toISOString() };
+  await db.put('drafts', rec);
+  schedulePush(jobId);
+  return rec;
+}
+
+// ---------- draft push ----------
+const timers = new Map();
+const running = new Map();
+export function schedulePush(jobId, delay = 2500) {
+  clearTimeout(timers.get(jobId));
+  timers.set(jobId, setTimeout(() => pushDraft(jobId).catch(() => {}), delay));
+}
+
+/** one runner per job */
+function exclusive(key, fn) {
+  const prev = running.get(key) || Promise.resolve();
+  const p = prev.catch(() => {}).then(fn);
+  running.set(key, p.finally(() => { if (running.get(key) === p) running.delete(key); }));
+  return p;
+}
+
+export function pushDraft(jobId, { force = false } = {}) {
+  return exclusive('draft:' + jobId, async () => {
+    const job = await db.get('jobs', jobId);
+    if (!job || !job.session || job.read_only || !online()) return { skipped: true };
+    if (['queued', 'submitted'].includes(job.status)) return { skipped: true };
+    const draft = await db.get('drafts', jobId);
+    if (!draft) return { skipped: true };
+    if (!force && draft.local_rev === job.pushed_local_rev) return { skipped: true, upToDate: true };
+    try {
+      const r = await call('/draft', { method: 'POST', session: job.session, body: { rev: job.server_rev || 0, payload: { format: 'gbqs.forms.draft/1', form_key: job.form_key, form_version: job.form_version, saved_at: draft.saved_at, state: draft.state } } });
+      const j2 = await db.update('jobs', jobId, (j) => ({ ...j, server_rev: r.rev, pushed_local_rev: draft.local_rev, synced_at: new Date().toISOString(), status: j.status === 'new' ? 'in_progress' : j.status }));
+      emit('synced', { jobId, job: j2 });
+      return { ok: true, rev: r.rev };
+    } catch (e) {
+      if (e instanceof ApiError && e.code === 'stale') {
+        let server = null;
+        try { server = await call('/draft', { session: job.session }); } catch (e2) { if (await handleAuthError(jobId, e2)) return { error: e2.code }; }
+        emit('stale', { jobId, serverRev: e.data.server_rev, server });
+        return { stale: true };
+      }
+      if (await handleAuthError(jobId, e)) return { error: e.code };
+      if (e instanceof ApiError && e.retryable) schedulePush(jobId, nextDelay(1));
+      emit('syncerror', { jobId, code: e.code });
+      return { error: e.code };
+    }
+  });
+}
+
+/** Stale resolution: "keep mine" -> overwrite server (build on server rev); "use server" -> replace local state. */
+export async function resolveStale(jobId, choice, server) {
+  if (choice === 'mine') {
+    await db.update('jobs', jobId, (j) => ({ ...j, server_rev: server?.rev ?? j.server_rev }));
+    return pushDraft(jobId, { force: true });
+  }
+  const state = server?.payload?.state;
+  if (state) {
+    const cur = await db.get('drafts', jobId);
+    const rec = { job_id: jobId, state, local_rev: (cur?.local_rev || 0) + 1, saved_at: server.saved_at || new Date().toISOString() };
+    await db.put('drafts', rec);
+    await db.update('jobs', jobId, (j) => ({ ...j, server_rev: server.rev, pushed_local_rev: rec.local_rev, synced_at: new Date().toISOString() }));
+  }
+  return { replaced: !!state };
+}
+
+// ---------- files ----------
+export async function addFile(rec) {
+  const r = { status: 'pending', attempts: 0, created_at: new Date().toISOString(), ...rec };
+  await db.put('files', r);
+  emit('files', { jobId: r.job_id });
+  if (online()) uploadFiles(r.job_id).catch(() => {});
+  return r;
+}
+
+async function uploadOne(job, f) {
+  const reg = await call('/file', {
+    method: 'POST', session: job.session,
+    body: { client_file_id: f.id, kind: f.kind, section: f.section || null, mime: f.mime, size_bytes: f.size, taken_at: f.taken_at || null },
+  });
+  if (!reg.already_uploaded) {
+    if (!f.blob) throw new ApiError('not_found', 404);
+    await db.put('files', { ...f, status: 'uploading', storage_path: reg.storage_path });
+    emit('files', { jobId: job.job_id });
+    await putFile(reg.upload.url, f.blob, reg.upload.content_type || f.mime);
+  }
+  try {
+    await call('/file/confirm', { method: 'POST', session: job.session, body: { client_file_id: f.id } });
+  } catch (e) {
+    if (!(e instanceof ApiError && e.code === 'not_found' && reg.already_uploaded === false)) throw e;
+    throw e;
+  }
+  await db.put('files', { ...f, status: 'uploaded', storage_path: reg.storage_path, uploaded_at: new Date().toISOString(), error: null });
+  emit('files', { jobId: job.job_id });
+}
+
+/** Upload pending files of a job (optionally only the given ids). Resolves true when all of them are uploaded. */
+export function uploadFiles(jobId, onlyIds = null) {
+  return exclusive('files:' + jobId, async () => {
+    const job = await db.get('jobs', jobId);
+    if (!job || !job.session || job.read_only) return false;
+    const files = (await db.byIndex('files', 'job_id', jobId)).filter((f) => !onlyIds || onlyIds.includes(f.id));
+    let allDone = true;
+    for (const f of files) {
+      if (f.status === 'uploaded') continue;
+      if (f.removed && !(onlyIds && onlyIds.includes(f.id))) continue;
+      if (!online()) { allDone = false; break; }
+      if (f.next_at && Date.now() < f.next_at && !onlyIds) { allDone = false; continue; }
+      try { await uploadOne(job, f); } catch (e) {
+        allDone = false;
+        if (await handleAuthError(jobId, e)) return false;
+        const attempts = (f.attempts || 0) + 1;
+        await db.put('files', { ...f, status: 'error', attempts, error: e.code || 'error', next_at: Date.now() + nextDelay(attempts - 1) });
+        emit('files', { jobId });
+        if (e.code === 'offline') break;
+      }
+    }
+    return allDone;
+  });
+}
+
+// ---------- outbox ----------
+export async function enqueueSubmission(jobId, payload, fileIds) {
+  const existing = await db.get('outbox', jobId);
+  if (existing) return existing; // never create a second submission for the same job
+  const rec = { job_id: jobId, client_submission_id: (crypto.randomUUID ? crypto.randomUUID() : 'sub_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10)), payload, file_ids: fileIds, status: 'queued', attempts: 0, next_at: 0, created_at: new Date().toISOString() };
+  await db.put('outbox', rec);
+  await db.update('jobs', jobId, (j) => ({ ...j, status: 'queued' }));
+  emit('outbox', { jobId });
+  processOutbox(jobId).catch(() => {});
+  return rec;
+}
+
+export function processOutbox(jobId, { force = false } = {}) {
+  return exclusive('outbox:' + jobId, async () => {
+    const ob = await db.get('outbox', jobId);
+    if (!ob || ob.status === 'sent' || ob.status === 'blocked') return ob;
+    if (!force && ob.next_at && Date.now() < ob.next_at) return ob;
+    const job = await db.get('jobs', jobId);
+    if (!job || !job.session) return ob;
+    if (!online()) return ob;
+    await db.put('outbox', { ...ob, status: 'sending' }); emit('outbox', { jobId });
+    try {
+      const filesOk = await uploadFiles(jobId, ob.file_ids || []);
+      if (!filesOk) throw new ApiError('offline', 0, { stage: 'files' });
+      const r = await call('/submit', { method: 'POST', session: job.session, body: { client_submission_id: ob.client_submission_id, payload: ob.payload } });
+      const done = { ...ob, status: 'sent', result: r, sent_at: new Date().toISOString(), last_error: null };
+      await db.put('outbox', done);
+      await db.update('jobs', jobId, (j) => ({ ...j, status: 'submitted', read_only: true, read_only_reason: 'submitted', submission: { client_submission_id: ob.client_submission_id, submission_id: r.submission_id, status: r.status, at: done.sent_at, duplicate: !!r.duplicate } }));
+      emit('outbox', { jobId, sent: true, result: r });
+      return done;
+    } catch (e) {
+      const cur = await db.get('outbox', jobId);
+      const code = e instanceof ApiError ? e.code : 'error';
+      if (code === 'already_submitted') {
+        const blocked = { ...cur, status: 'blocked', last_error: code };
+        await db.put('outbox', blocked);
+        await db.update('jobs', jobId, (j) => ({ ...j, status: 'submitted', read_only: true, read_only_reason: 'already_submitted' }));
+        emit('outbox', { jobId, blocked: code });
+        return blocked;
+      }
+      if (READ_ONLY_CODES[code]) {
+        await db.put('outbox', { ...cur, status: 'blocked', last_error: code });
+        await markReadOnly(jobId, code, e.data);
+        emit('outbox', { jobId, blocked: code });
+        return cur;
+      }
+      if (code === 'invalid_session' || code === 'missing_token') await handleAuthError(jobId, e);
+      const attempts = (cur.attempts || 0) + 1;
+      const rec = { ...cur, status: 'error', attempts, last_error: code, next_at: Date.now() + nextDelay(attempts - 1) };
+      await db.put('outbox', rec);
+      emit('outbox', { jobId, error: code });
+      return rec;
+    }
+  });
+}
+
+// ---------- background loop ----------
+let started = false;
+export async function kickAll(force = false) {
+  if (!online()) return;
+  const jobs = await db.all('jobs');
+  for (const j of jobs) {
+    if (!j.session || j.read_only) {
+      if (j.status !== 'queued') continue;
+    }
+    const ob = await db.get('outbox', j.job_id);
+    if (ob && ob.status !== 'sent' && ob.status !== 'blocked') await processOutbox(j.job_id, { force });
+    else if (!ob) { await pushDraft(j.job_id); await uploadFiles(j.job_id); }
+  }
+}
+export function startLoop() {
+  if (started) return; started = true;
+  addEventListener('online', () => { emit('net', { online: true }); kickAll(true); });
+  addEventListener('offline', () => emit('net', { online: false }));
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') kickAll(); });
+  setInterval(() => kickAll(), 20000);
+  setTimeout(() => kickAll(), 1500);
+}

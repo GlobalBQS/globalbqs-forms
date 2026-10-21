@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<script>
+  // /j/<token> served as index.html (static-host fallback): go to the hash route before anything loads.
+  (function(){var m=/^(.*\/)j\/([0-9a-fA-F]{64})\/?$/.exec(location.pathname);if(m){location.replace(m[1]+'#/j/'+m[2].toLowerCase());}})();
+</script>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GlobalBQS Forms</title>
+<meta name="description" content="GlobalBQS survey forms for surveyors – works offline on board.">
+<meta name="theme-color" content="#0a1a33">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" sizes="32x32" href="assets/icons/favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="assets/icons/icon.svg">
+<!-- iOS home-screen app -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="GBQS Forms">
+<meta name="format-detection" content="telephone=no">
+<link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+<link rel="modulepreload" href="js/app.js">
+</head>
+<body>
+<div class="demo-ribbon" aria-hidden="true">DEMO</div>
+<div id="app"><div class="boot">Loading GlobalBQS Forms…</div></div>
+<div class="modal" id="modal" hidden><div class="modal-c" role="dialog" aria-modal="true" aria-labelledby="mTitle"><h3 id="mTitle"></h3><div id="mBody" style="display:grid;gap:10px"></div><div id="mBtns"></div></div></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<div class="update-bar" id="updateBar" role="alert" hidden><span>New version available</span><button type="button" id="updateBtn">Reload</button></div>
+<noscript>GlobalBQS Forms needs JavaScript.</noscript>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

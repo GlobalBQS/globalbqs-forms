@@ -1,0 +1,3 @@
+# Netlify / Cloudflare Pages: job links from the e-mail -> app with hash route
+/demo/j/:token  /demo/#/j/:token  302
+/j/:token       /#/j/:token       302

@@ -1,0 +1,620 @@
+// GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
+// -> start check -> form -> status), service worker + update prompt, network state.
+import { ENV } from '../config.js';
+import * as db from './db.js';
+import { call, ApiError, textFor } from './api.js';
+import * as sync from './sync.js';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js';
+import { loadForm, isSupported } from './forms/registry.js';
+import { mountForm } from './forms/engine.js';
+import { imoOk } from './forms/calc.js';
+
+const app = $('#app');
+let cleanup = null;
+const pending = new Map(); // token -> {summary, codeSent, email, expires, code, takeover}
+
+// ---------- environment / device ----------
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isAndroid = () => /Android/i.test(navigator.userAgent);
+function deviceLabel() {
+  const ua = navigator.userAgent;
+  const dev = /iPad/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ? 'iPad' : /iPhone/.test(ua) ? 'iPhone' : /Android/.test(ua) ? (/Mobile/.test(ua) ? 'Android phone' : 'Android tablet') : /Windows/.test(ua) ? 'Windows PC' : /Mac/.test(ua) ? 'Mac' : /Linux/.test(ua) ? 'Linux PC' : 'Device';
+  const br = /EdgA?\//.test(ua) ? 'Edge' : /CriOS|Chrome\//.test(ua) ? 'Chrome' : /FxiOS|Firefox\//.test(ua) ? 'Firefox' : /Safari\//.test(ua) ? 'Safari' : 'Browser';
+  return `${dev} · ${br}${isStandalone() ? ' (app)' : ''}`;
+}
+const TOKEN_RE = /[0-9a-f]{64}/i;
+
+// ---------- chrome ----------
+function bar(title, sub, back, extra = '') {
+  return `<header class="appbar">${back ? `<button class="back" type="button" data-go="${back}">‹ Back</button>` : ''}
+    <div class="appbar-row"><div class="brand">${LOGO}<b>Global<span>BQS</span> Surveyor</b></div><span class="net ${navigator.onLine ? '' : 'off'}" data-net><i></i>${navigator.onLine ? 'Online' : 'No signal'}</span></div>
+    ${title ? `<h1>${title}</h1>` : ''}${sub ? `<p>${sub}</p>` : ''}${extra}</header>`;
+}
+function screen(html) {
+  if (cleanup) { try { cleanup(); } catch { /* */ } cleanup = null; }
+  closeModal();
+  app.className = 'journey-app';
+  app.innerHTML = `<div class="phone">${html}</div>`;
+  paintedSeq = routeSeq;
+  window.scrollTo(0, 0);
+}
+/** re-render the current screen without running the route cleanup (keeps listeners of the view) */
+let routeSeq = 0, paintedSeq = -1;
+function repaint(html) { const ph = app.querySelector('.phone'); if (ph && app.className === 'journey-app' && paintedSeq === routeSeq) { ph.innerHTML = html; } else screen(html); }
+const firstRun = (n) => `<div class="progress" aria-label="First time setup, step ${n} of 2"><i class="on"></i><i class="${n > 1 ? 'on' : ''}"></i><span>First time on this device · step ${n} of 2</span></div>`;
+function errorScreen(title, msg, actions = '') {
+  screen(`${bar(title, '')}<div class="content">${note('bad', esc(msg))}${actions}<button class="btn ghost block" type="button" data-go="#/">My jobs on this device</button></div>`);
+}
+function updateNetPills() {
+  document.querySelectorAll('[data-net]').forEach((n) => { n.classList.toggle('off', !navigator.onLine); n.innerHTML = `<i></i>${navigator.onLine ? 'Online' : 'No signal'}`; });
+}
+
+// ---------- jobs ----------
+async function jobByToken(token) { return (await db.all('jobs')).find((j) => j.token === token) || null; }
+const statusPill = (j, ob) => {
+  if (j.read_only && j.read_only_reason === 'taken_over') return '<span class="pill bad">Continued on another device</span>';
+  if (j.read_only_reason === 'cancelled') return '<span class="pill bad">Cancelled</span>';
+  if (j.status === 'submitted') return '<span class="pill info">Under review by GlobalBQS</span>';
+  if (j.status === 'queued') return `<span class="pill warn">${ob && ob.status === 'sending' ? 'Sending…' : 'Waiting to send'}</span>`;
+  if (j.status === 'in_progress') return '<span class="pill info">In progress</span>';
+  return j.prefill ? '<span class="pill ok">Ready offline</span>' : '<span class="pill warn">Not downloaded</span>';
+};
+
+/** store / refresh a job from a /job response that included the prefill (signed in) */
+async function storeJobFromOpen(token, r, sessionInfo) {
+  const id = r.job.id;
+  const prev = await db.get('jobs', id);
+  const job = {
+    ...(prev || {}),
+    job_id: id, token,
+    session: sessionInfo ? sessionInfo.session_token : prev?.session,
+    device_id: sessionInfo ? sessionInfo.device_id : prev?.device_id,
+    form_key: r.job.form_key, form_version: r.job.form_version || '1.0', job_status: r.job.status,
+    summary: r.summary, prefill: r.prefill || prev?.prefill || null,
+    status: prev?.status && prev.status !== 'new' ? prev.status : (r.job.status === 'in_progress' && r.draft ? 'in_progress' : 'new'),
+    read_only: false, read_only_reason: null, needs_sign_in: false,
+    server_rev: prev?.server_rev ?? 0, pushed_local_rev: prev?.pushed_local_rev ?? 0,
+    opened_at: prev?.opened_at || new Date().toISOString(), updated_at: new Date().toISOString(),
+  };
+  if (r.job.status === 'submitted' && job.status !== 'submitted') { job.status = 'submitted'; job.read_only = true; job.read_only_reason = 'submitted'; }
+  // server draft: adopt it when this device has nothing newer
+  const local = await db.get('drafts', id);
+  if (r.draft && r.draft.payload && r.draft.payload.state) {
+    const serverRev = r.draft.rev || 0;
+    if (!local) {
+      await db.put('drafts', { job_id: id, state: r.draft.payload.state, local_rev: 1, saved_at: r.draft.saved_at });
+      job.server_rev = serverRev; job.pushed_local_rev = 1;
+    } else if (serverRev > (job.server_rev || 0)) {
+      const unpushed = local.local_rev !== job.pushed_local_rev;
+      if (!unpushed) {
+        await db.put('drafts', { job_id: id, state: r.draft.payload.state, local_rev: local.local_rev + 1, saved_at: r.draft.saved_at });
+        job.server_rev = serverRev; job.pushed_local_rev = local.local_rev + 1;
+      } else {
+        job.pending_stale = { rev: serverRev, saved_at: r.draft.saved_at, payload: r.draft.payload };
+      }
+    }
+  } else if (r.draft && !local) job.server_rev = r.draft.rev || 0;
+  await db.put('jobs', job);
+  return job;
+}
+
+// ---------- views ----------
+const V = {};
+
+V.jobs = async () => {
+  const jobs = (await db.all('jobs')).sort((a, b) => String(b.opened_at).localeCompare(String(a.opened_at)));
+  const obs = Object.fromEntries((await db.all('outbox')).map((o) => [o.job_id, o]));
+  const notReady = jobs.filter((j) => !j.prefill && !j.read_only).length;
+  screen(`${bar('My jobs', 'Jobs opened on this device')}
+  <div class="content">
+    ${db.memoryOnly ? note('bad', '<b>This browser does not allow the app to store data</b> (private mode?). Your work is lost when you close it. Use a normal window or the home-screen app.') : ''}
+    ${jobs.length ? (notReady ? note('warn', `<b>${notReady} job${notReady > 1 ? 's' : ''} not ready offline yet.</b> Open ${notReady > 1 ? 'them' : 'it'} while you have signal.`) : note('ok', 'All jobs are on this device. You can go on board without signal.')) : note('info', 'No jobs on this device yet. Open the job link from the e-mail on this device, or paste it below.')}
+    ${jobs.map((j) => `<button class="jobcard" type="button" data-go="#/job/${j.job_id}">
+      <div class="row"><span class="mono small">${esc(j.summary?.gbqs_reference || '')}</span>${statusPill(j, obs[j.job_id])}</div>
+      <span class="vsl">${esc(j.summary?.vessel_name || 'Job')}</span><span class="muted">${esc(j.summary?.survey_type_label || '')} · ${esc(j.summary?.port || '')}${j.summary?.eta ? ' · ETA ' + esc(j.summary.eta) : ''}</span></button>`).join('')}
+    <div class="card"><h3>Open a job link</h3><p class="muted small" style="margin:0">On iPhone the link from the e-mail opens in Safari. In the home-screen app, paste the link here once.</p>
+      <div class="fix"><label for="pasteLink">Job link from the e-mail</label><input id="pasteLink" autocomplete="off" placeholder="https://forms.globalbqs.com/j/…"></div>
+      <div class="row" style="gap:8px;flex-wrap:nowrap"><button class="btn ghost" type="button" id="pasteBtn">Paste</button><button class="btn primary" type="button" id="openLinkBtn">Open job</button></div></div>
+    <p class="muted small" style="margin:0;text-align:center">GlobalBQS Forms ${esc(ENV.version)}${ENV.isDemo ? ' · DEMO' : ''}</p>
+  </div>`);
+  const open = () => { const m = TOKEN_RE.exec($('#pasteLink').value || ''); if (!m) { toast('That is not a GlobalBQS job link.'); return; } location.hash = '#/j/' + m[0].toLowerCase(); };
+  $('#openLinkBtn').onclick = open;
+  $('#pasteBtn').onclick = async () => { try { $('#pasteLink').value = await navigator.clipboard.readText(); open(); } catch { toast('Paste the link into the field (long-press → Paste).'); } };
+};
+
+V.link = async (token) => {
+  token = token.toLowerCase();
+  const local = await jobByToken(token);
+  screen(`${bar('Opening the job…', '')}<div class="content"><div class="card"><p class="muted" style="margin:0">Checking the link…</p></div></div>`);
+  if (!navigator.onLine) {
+    if (local) { location.replace('#/job/' + local.job_id); return; }
+    errorScreen('No signal', 'Opening a new job link needs signal, once. Try again when you are back in range.', '<button class="btn primary block" type="button" data-reload>Try again</button>');
+    return;
+  }
+  let r;
+  try { r = await call('/job', { query: { token }, session: local?.session }); } catch (e) {
+    if (e.code === 'offline' && local) { location.replace('#/job/' + local.job_id); return; }
+    if (e.code === 'cancelled' && local) await db.put('jobs', { ...local, read_only: true, read_only_reason: 'cancelled' });
+    errorScreen(e.code === 'cancelled' ? 'Job cancelled' : e.code === 'invalid_link' ? 'Link not valid' : 'Could not open the job', textFor(e.code),
+      e.retryable ? '<button class="btn primary block" type="button" data-reload>Try again</button>' : '');
+    return;
+  }
+  if (!r.needs_sign_in && r.prefill) {
+    const job = await storeJobFromOpen(token, r, null);
+    location.replace('#/job/' + job.job_id);
+    return;
+  }
+  if (local && r.session && r.session.code === 'revoked') {
+    await db.put('jobs', { ...local, read_only: true, read_only_reason: r.session.reason || 'taken_over' });
+    location.replace('#/job/' + local.job_id);
+    return;
+  }
+  pending.set(token, { summary: r.summary, active: r.active_device, job: r.job });
+  const skipped = await db.kvGet('install_skipped', false);
+  if (!isStandalone() && !skipped) location.replace('#/install/' + token);
+  else location.replace('#/signin/' + token);
+};
+
+V.install = async (token) => {
+  const p = pending.get(token);
+  if (!p) { location.replace('#/j/' + token); return; }
+  let tab = isAndroid() ? 'android' : 'ios';
+  let deferred = window.__bip || null;
+  const render = () => {
+    repaint(`${bar('Welcome' + (p.summary?.vessel_name ? '' : ''), 'Install once on this device (about 30 seconds)')}
+    <div class="content">
+      ${firstRun(1)}
+      <div class="card"><dl class="kv"><dt>Job</dt><dd class="mono">${esc(p.summary?.gbqs_reference || '')}</dd><dt>Survey</dt><dd>${esc(p.summary?.survey_type_label || '')}</dd><dt>Vessel</dt><dd>${esc(p.summary?.vessel_name || '')}</dd><dt>Port</dt><dd>${esc(p.summary?.port || '')}</dd>${p.summary?.eta ? `<dt>ETA</dt><dd>${esc(p.summary.eta)}</dd>` : ''}</dl></div>
+      ${note('info', 'Put the app on your home screen first. Then it opens without signal and keeps your work, also when you close it.')}
+      <div class="tabs" role="group" aria-label="Device type"><button type="button" data-tab="ios" aria-pressed="${tab === 'ios'}">iPhone / iPad</button><button type="button" data-tab="android" aria-pressed="${tab === 'android'}">Android</button></div>
+      <div class="card">${tab === 'ios'
+        ? `<ol class="howto"><li>Tap <b>Copy job link</b> below.</li><li>Tap the <b>Share</b> button of Safari (square with arrow) and choose <b>Add to Home Screen</b>, then <b>Add</b>.</li><li>Open GlobalBQS from your home screen and paste the link there.</li></ol>
+           <button class="btn ghost block" type="button" id="copyLink">Copy job link</button>`
+        : `${deferred ? '<button class="btn primary block" type="button" id="installBtn">Install the app</button>' : ''}<ol class="howto"><li>Tap the <b>⋮</b> menu at the top right of Chrome.</li><li>Choose <b>Install app</b> or <b>Add to Home screen</b>.</li><li>Confirm, then open GlobalBQS from your home screen; the job opens there.</li></ol>`}</div>
+      ${tab === 'ios' ? note('warn', '<b>iPhone / iPad:</b> sign in only in the app on your home screen, not in Safari. Safari and the home-screen app keep their data apart.') : ''}
+      <button class="btn primary block" type="button" id="skipInstall">Skip – continue in the browser</button>
+      <p class="muted small" style="margin:0;text-align:center">Laptop? It works in the browser too; nothing to install.</p>
+    </div>`);
+    app.querySelectorAll('[data-tab]').forEach((b) => { b.onclick = () => { tab = b.dataset.tab; render(); }; });
+    const cl = $('#copyLink'); if (cl) cl.onclick = async () => { const url = location.href.split('#')[0] + '#/j/' + token; try { await navigator.clipboard.writeText(url); toast('Job link copied. Paste it in the home-screen app.'); } catch { modal('Copy this link', `<p class="mono small" style="word-break:break-all">${esc(url)}</p>`); } };
+    const ib = $('#installBtn'); if (ib) ib.onclick = async () => { deferred.prompt(); const c = await deferred.userChoice.catch(() => null); window.__bip = null; deferred = null; if (c && c.outcome === 'accepted') toast('Installed. Open GlobalBQS from your home screen.'); render(); };
+    $('#skipInstall').onclick = async () => { await db.kvSet('install_skipped', true); location.replace('#/signin/' + token); };
+  };
+  setJobManifest(token);
+  render();
+  const onBip = () => { deferred = window.__bip; render(); };
+  addEventListener('gbqs:bip', onBip);
+  cleanup = () => removeEventListener('gbqs:bip', onBip);
+};
+
+V.signin = async (token) => {
+  let p = pending.get(token);
+  if (!p) {
+    const local = await jobByToken(token);
+    if (!navigator.onLine) { errorScreen('No signal', 'Signing in needs signal, once. After that the job works offline.'); return; }
+    try { const r = await call('/job', { query: { token } }); p = { summary: r.summary, active: r.active_device, job: r.job }; pending.set(token, p); } catch (e) { errorScreen('Could not open the job', textFor(e.code)); return; }
+    if (local) p.retake = true;
+  }
+  const render = (msg) => {
+    const ok = /^\d{6}$/.test(p.code || '');
+    repaint(`${bar('Sign in on this device', 'Step 2 of 2 · confirm it is you')}
+    <div class="content">
+      ${firstRun(2)}
+      <div class="card"><dl class="kv"><dt>Job</dt><dd class="mono">${esc(p.summary?.gbqs_reference || '')}</dd><dt>Vessel</dt><dd>${esc(p.summary?.vessel_name || '')}</dd></dl></div>
+      <div class="card"><p style="margin:0">We e-mail you a 6-digit code to confirm it's you. You need it once per job on this device.</p><p class="muted small" style="margin:0">Code goes to <b>${esc(p.email || p.summary?.surveyor_email_masked || 'your e-mail address')}</b>.</p>
+        ${p.codeSent ? `<p class="muted small" style="margin:0">Code sent. Valid until ${esc(new Date(p.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))} (device time).</p>` : ''}
+        <button class="btn ghost block" type="button" id="sendCode" ${navigator.onLine ? '' : 'disabled'}>${p.codeSent ? 'Send a new code' : 'Send me the code'}</button>
+        ${navigator.onLine ? '' : '<p class="muted small" style="margin:0">Signing in needs signal, once. After that the job works offline.</p>'}</div>
+      ${p.codeSent ? `<div class="card"><label class="muted small" for="code">6-digit code</label><input id="code" class="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" value="${esc(p.code || '')}" enterkeyhint="done">
+        ${msg ? `<p class="err" role="alert" style="margin:0">${esc(msg)}</p>` : ''}
+        <button class="btn primary block" type="button" id="verify" ${ok ? '' : 'disabled'}>Confirm and open the job</button></div>` : (msg ? note('bad', esc(msg)) : '')}
+      ${note('info', 'The job can be open on <b>one device at a time</b>. Whenever there is a connection your draft (figures, signatures, photos) is saved to GlobalBQS, so another device continues where the last sync stopped.')}
+    </div>`);
+    $('#sendCode').onclick = sendCode;
+    const c = $('#code');
+    if (c) {
+      c.oninput = () => { c.value = c.value.replace(/\D/g, '').slice(0, 6); p.code = c.value; $('#verify').disabled = !/^\d{6}$/.test(p.code); };
+      c.onkeydown = (e) => { if (e.key === 'Enter' && /^\d{6}$/.test(p.code || '')) verify(false); };
+      $('#verify').onclick = () => verify(false);
+      if (!p.code) c.focus();
+    }
+  };
+  async function sendCode() {
+    const b = $('#sendCode'); b.disabled = true;
+    try {
+      const r = await call('/code', { method: 'POST', body: { token, device_label: deviceLabel() } });
+      p.codeSent = true; p.email = r.email_masked; p.expires = r.expires_at; p.code = '';
+      toast('Code sent to ' + (r.email_masked || 'your e-mail'));
+      render();
+    } catch (e) { render(textFor(e.code)); }
+  }
+  async function verify(takeover) {
+    const b = $('#verify'); if (b) b.disabled = true;
+    try {
+      const r = await call('/verify', { method: 'POST', body: { token, code: p.code, device_label: deviceLabel(), takeover } });
+      if (r.needs_takeover) { p.takeover = { label: r.other_device_label, last_seen: r.other_last_seen }; location.replace('#/takeover/' + token); return; }
+      await finishSignIn(token, r);
+    } catch (e) {
+      let msg = textFor(e.code);
+      if (e.code === 'invalid_code' && e.data.attempts_left != null) msg += ` ${e.data.attempts_left} attempt${e.data.attempts_left === 1 ? '' : 's'} left.`;
+      if (['no_code', 'too_many_attempts'].includes(e.code)) { p.code = ''; }
+      if (takeover) { location.replace('#/signin/' + token); setTimeout(() => toast(msg), 300); return; }
+      render(msg);
+    }
+  }
+  V._verify = verify;
+  render();
+};
+
+async function finishSignIn(token, r) {
+  const sess = { session_token: r.session_token, device_id: r.device_id };
+  let open;
+  try { open = await call('/job', { query: { token }, session: sess.session_token }); } catch (e) { errorScreen('Signed in, but the job could not be loaded', textFor(e.code), '<button class="btn primary block" type="button" data-reload>Try again</button>'); return; }
+  const job = await storeJobFromOpen(token, open, sess);
+  pending.delete(token);
+  try { if (navigator.storage && navigator.storage.persist) await navigator.storage.persist(); } catch { /* */ }
+  toast(r.took_over ? 'Continued on this device from the last sync.' : 'Signed in on this device.');
+  location.replace('#/job/' + job.job_id);
+}
+
+V.takeover = async (token) => {
+  const p = pending.get(token);
+  if (!p || !p.takeover) { location.replace('#/signin/' + token); return; }
+  const last = p.takeover.last_seen ? new Date(p.takeover.last_seen) : null;
+  screen(`${bar('Continue here?', `${esc(p.summary?.gbqs_reference || '')} · ${esc(p.summary?.vessel_name || '')}`)}
+  <div class="content">
+    ${note('warn', `<b>This job is open on another device (${esc(p.takeover.label || 'unknown device')}${last ? ' · last active ' + esc(last.toLocaleString([], { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })) : ''}). Continue here?</b>`)}
+    <div class="card"><dl class="kv"><dt>Continues with</dt><dd>Figures, signatures and photos up to the last sync of the other device</dd></dl></div>
+    ${note('bad', 'Changes on the other device that were not synced yet will not come along.')}
+    <button class="btn primary block" type="button" id="doTake">Continue on this device</button>
+    <button class="btn ghost block" type="button" id="cancelTake">Cancel</button>
+    <p class="muted small" style="margin:0">Continuing takes the job over. The other device becomes read-only. No call to ops needed.</p>
+  </div>`);
+  $('#doTake').onclick = async () => {
+    $('#doTake').disabled = true;
+    try {
+      const r = await call('/verify', { method: 'POST', body: { token, code: p.code, device_label: deviceLabel(), takeover: true } });
+      if (r.needs_takeover) { toast('Still open elsewhere; try again.'); $('#doTake').disabled = false; return; }
+      await finishSignIn(token, r);
+    } catch (e) {
+      p.code = ''; p.takeover = null;
+      location.replace('#/signin/' + token);
+      setTimeout(() => toast(textFor(e.code) + (e.code === 'no_code' ? '' : '')), 300);
+    }
+  };
+  $('#cancelTake').onclick = () => { pending.delete(token); toast('Cancelled. The job stays open on the other device.'); location.replace('#/'); };
+};
+
+function roBanner(job) {
+  if (!job.read_only) return '';
+  if (job.read_only_reason === 'taken_over') return note('bad', `<b>This job was continued on another device.</b> This copy is read-only. <button class="btn ghost small" type="button" data-go="#/signin/${job.token}">Sign in to take it back</button>`);
+  if (job.read_only_reason === 'cancelled') return note('bad', '<b>This job was cancelled by GlobalBQS.</b> This copy is read-only.');
+  if (job.read_only_reason === 'already_submitted') return note('warn', '<b>This job was already submitted</b> (from another device or earlier). This copy is read-only.');
+  if (job.read_only_reason === 'submitted') return '';
+  return note('warn', `<b>${esc(textFor(job.read_only_reason))}</b>`);
+}
+
+V.job = async (id) => {
+  const job = await db.get('jobs', id);
+  if (!job) { location.replace('#/'); return; }
+  const ob = await db.get('outbox', id);
+  const s = job.summary || {}, pf = job.prefill || {};
+  const draft = await db.get('drafts', id);
+  const started = !!(draft && draft.state && draft.state.gate && draft.state.gate.done);
+  const port = pf.port || {}, sch = pf.schedule || {}, nom = pf.nomination || {};
+  const grades = (nom.deliveries || []).map((d) => `${d.grade}${d.nominated_mt != null ? ' ' + d.nominated_mt + ' MT' : ''}`).join(' · ') || nom.ordered_quantities || '—';
+  const supported = isSupported(job.form_key);
+  screen(`${bar(esc(s.vessel_name || pf.vessel?.name || 'Job'), `${esc(s.gbqs_reference || '')} · ${esc(s.survey_type_label || '')}`, '#/')}
+  <div class="content">
+    <div class="row">${statusPill(job, ob)}<span class="muted small">${job.synced_at ? 'Last synced ' + esc(timeAgo(job.synced_at)) : 'Not synced yet'}</span></div>
+    ${roBanner(job)}
+    ${!supported ? note('warn', 'This survey type is not available in this app version yet. Use the form link from GlobalBQS operations.') : ''}
+    <div class="card"><dl class="kv"><dt>IMO</dt><dd class="mono">${esc(pf.vessel?.imo || '—')}</dd><dt>Place</dt><dd>${esc(port.place || s.port || '—')}</dd><dt>ETA</dt><dd>${esc(sch.eta || s.eta || '—')}</dd><dt>ETB</dt><dd>${esc(sch.etb || '—')}</dd><dt>Grades</dt><dd>${esc(grades)}</dd><dt>Supplier</dt><dd>${esc(nom.supplier_name || '—')}</dd><dt>Agent</dt><dd>${esc(pf.parties?.agent || '—')}</dd>
+      <dt>Form version</dt><dd class="mono">${esc(job.form_version || '1.0')}</dd>${job.submission?.submission_id ? `<dt>Submission ID</dt><dd class="mono">${esc(job.submission.submission_id)}</dd>` : ''}</dl></div>
+    ${job.read_only ? '' : note('info', `<b>Open on this device.</b> Whenever there is a connection your draft (figures, signatures, photos) is saved to GlobalBQS automatically. Switching device? Open the job link there and sign in; it continues where the last sync stopped.`)}
+    ${pf.survey?.instructions ? `<div class="card"><h3>Instructions from the client</h3><p class="muted" style="margin:0;white-space:pre-line">${esc(pf.survey.instructions)}</p></div>` : ''}
+    ${!job.prefill ? note('warn', 'This job is not ready offline yet. Open it once with signal.') : ''}
+    ${['queued', 'submitted'].includes(job.status) ? '<button class="btn primary block" type="button" data-go="#/job/' + id + '/status">Show status</button>'
+      : supported && job.prefill ? `<button class="btn primary block" type="button" data-go="#/job/${id}/${started ? 'form' : 'check'}">${job.read_only ? 'View survey (read-only)' : started ? 'Continue survey' : 'I am on board: start'}</button>` : ''}
+    ${job.status === 'submitted' || job.read_only_reason === 'cancelled' ? '<button class="btn ghost block" type="button" id="removeJob">Remove from this device</button>' : ''}
+  </div>`);
+  const rm = $('#removeJob');
+  if (rm) rm.onclick = async () => {
+    const v = await modal('Remove this job from this device?', '<p>The survey stays with GlobalBQS. Only the copy on this device is removed.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove', value: 'rm', kind: 'danger' }]);
+    if (!v) return;
+    for (const f of await db.byIndex('files', 'job_id', id)) await db.del('files', f.id);
+    await db.del('drafts', id); await db.del('outbox', id); await db.del('jobs', id);
+    location.replace('#/');
+  };
+};
+
+// ---------- start check ----------
+const SURVEY_TYPES = ['Bunker Quantity Survey (B221)', 'On-Hire Bunker Survey', 'On-Hire Condition Survey', 'On-Hire B+C Survey (combined)', 'Off-Hire Bunker Survey', 'Off-Hire Condition Survey', 'Off-Hire B+C Survey (combined)', 'Bunker Delivery Survey'];
+async function loadState(job, form) {
+  const d = await db.get('drafts', job.job_id);
+  if (d && d.state) return d.state;
+  const st = form.initState(job.prefill);
+  await db.put('drafts', { job_id: job.job_id, state: st, local_rev: 0, saved_at: new Date().toISOString() });
+  return st;
+}
+V.check = async (id) => {
+  const job = await db.get('jobs', id);
+  if (!job) { location.replace('#/'); return; }
+  const form = await loadForm(job.form_key);
+  if (!form) { location.replace('#/job/' + id); return; }
+  const S = await loadState(job, form);
+  S.gate = S.gate || { answers: {}, fix: {}, done: false };
+  const g = S.gate, o = S.order;
+  const save = () => sync.saveLocal(id, S);
+  const fin = (k, label, val, opt = {}) => `<label for="fx_${k}">${label}</label><input id="fx_${k}" data-fix="${k}" value="${esc(val)}" autocomplete="off" ${opt.num ? 'inputmode="numeric"' : ''} ${opt.max ? `maxlength="${opt.max}"` : ''} class="${opt.bad ? 'bad' : ''}" style="${opt.mono ? 'font-family:var(--mono)' : ''}">`;
+  const gl = form.gateGrades(S);
+  const fixOk = (k) => {
+    const f = g.fix;
+    if (k === 'vessel') return !!String(f.vessel ?? o.vessel).trim() && imoOk(f.imo ?? o.imo);
+    if (k === 'type') return !!f.typeExp;
+    if (k === 'grades') return gl.some(([gg]) => String(f['g_' + gg] ?? '') !== '') || !!String(f.gradesNote || '').trim();
+    return true;
+  };
+  const GATE = [
+    ['vessel', 'Vessel on board matches?', () => `<span class="big">${esc(o.vessel)}</span><span class="big">IMO ${esc(o.imo || '—')} ${imoOk(o.imo) ? '<span class="pill ok">Check digit OK</span>' : '<span class="pill bad">Check digit wrong</span>'}</span><span class="muted small">Check the IMO number on the ship's certificates, not only the name.</span>`,
+      () => { const imo = g.fix.imo ?? o.imo, ok = imoOk(imo); return fin('vessel', 'Vessel name as on board', g.fix.vessel ?? o.vessel) + fin('imo', 'IMO number (7 digits)', imo, { num: 1, max: 7, mono: 1, bad: !ok }) + `<span class="${ok ? 'okm' : 'err'}" data-imomsg>${ok ? 'IMO check digit OK.' : 'IMO check digit does not match. Check the number on the certificates.'}</span>`; }],
+    ['type', 'Is this the survey you are asked to do?', () => `<span class="big">${esc(o.type)}</span>`,
+      () => `<label for="fx_typeExp">Which survey does the vessel/Master expect?</label><select id="fx_typeExp" data-fix="typeExp" class="sel"><option value="">Choose…</option>${SURVEY_TYPES.filter((t) => t !== o.type).map((t) => `<option ${g.fix.typeExp === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
+        <label for="fx_typeNote">Remark (optional)</label><textarea id="fx_typeNote" data-fix="typeNote">${esc(g.fix.typeNote || '')}</textarea><span class="muted small">You carry on with the ${esc(o.type)}. Ops sees the mismatch and contacts the client if needed.</span>`],
+    ['grades', 'Grades and quantities as nominated?', () => `<span class="big">${esc(gl.map(([gg, q]) => gg + (q ? ' ' + q + ' MT' : '')).join(' · ') || '—')}</span><span class="muted small">Compare with the supplier's delivery documents.</span>`,
+      () => gl.map(([gg, q]) => fin('g_' + gg, `${gg} as stated on board (nominated: ${q ? q + ' MT' : '—'})`, g.fix['g_' + gg] ?? '', { mono: 1 })).join('') + `<label for="fx_gradesNote">Other difference <span class="muted">(optional)</span></label><textarea id="fx_gradesNote" data-fix="gradesNote">${esc(g.fix.gradesNote || '')}</textarea>`],
+  ];
+  const allOk = () => GATE.every(([k]) => g.answers[k] === 'y' || (g.answers[k] === 'n' && fixOk(k)));
+  const render = () => {
+    const fixes = GATE.filter(([k]) => g.answers[k] === 'n').length;
+    repaint(`${bar('Before you start', `${esc(o.vessel)} · ${esc(o.type)}`, '#/job/' + id)}
+    <div class="content">
+      ${roBanner(job)}
+      <p class="muted" style="margin:0">Three quick checks. Something different on board? Choose “No”, correct it here and carry on. Your correction is saved with the survey and visible to ops.</p>
+      ${GATE.map(([k, q, body, fix]) => `<div class="check ${g.answers[k] === 'y' ? 'yes' : g.answers[k] === 'n' ? 'no' : ''}"><q>${q}</q>${body()}
+        <div class="yn" role="group" aria-label="${esc(q)}"><button type="button" class="y" data-gate="${k}" data-v="y" aria-pressed="${g.answers[k] === 'y'}">Yes</button><button type="button" class="n" data-gate="${k}" data-v="n" aria-pressed="${g.answers[k] === 'n'}">No, correct it</button></div>
+        ${g.answers[k] === 'n' ? `<div class="fix">${fix()}<span class="saved-fix" data-fixstate="${k}">${fixOk(k) ? 'Saved for ops.' : ''}</span></div>` : ''}</div>`).join('')}
+      ${fixes ? note('info', `Your correction${fixes > 1 ? 's are' : ' is'} saved with the survey and shown to ops; no need to call. The Master and Chief Engineer confirm the figures with their signatures.`) : ''}
+      <button class="btn primary block" type="button" id="startForm" ${allOk() && !job.read_only ? '' : 'disabled'}>Open the survey form</button>
+      <button class="btn ghost block" type="button" id="skipGate">Skip the check for now</button>
+    </div>`);
+    app.querySelectorAll('[data-gate]').forEach((b) => { b.onclick = () => { if (job.read_only) return; g.answers[b.dataset.gate] = b.dataset.v; save(); render(); }; });
+    $('#startForm').onclick = () => { g.done = true; save().then(() => { if (Object.keys(g.fix).length) toast('Corrections saved for ops'); location.hash = '#/job/' + id + '/form'; }); };
+    $('#skipGate').onclick = () => { g.done = true; save().then(() => { location.hash = '#/job/' + id + '/form'; }); };
+  };
+  const onInput = (e) => {
+    const f = e.target.closest('[data-fix]'); if (!f || job.read_only) return;
+    g.fix[f.dataset.fix] = f.value;
+    if (f.dataset.fix === 'imo') { const ok = imoOk(f.value); f.classList.toggle('bad', !ok); const m = app.querySelector('[data-imomsg]'); if (m) { m.className = ok ? 'okm' : 'err'; m.textContent = ok ? 'IMO check digit OK.' : 'IMO check digit does not match. Check the number on the certificates.'; } }
+    app.querySelectorAll('[data-fixstate]').forEach((s) => { s.textContent = fixOk(s.dataset.fixstate) ? 'Saved for ops.' : ''; });
+    $('#startForm').disabled = !allOk();
+    save();
+  };
+  render();
+  app.addEventListener('input', onInput); app.addEventListener('change', onInput);
+  const prev = cleanup; cleanup = () => { app.removeEventListener('input', onInput); app.removeEventListener('change', onInput); if (prev) prev(); };
+};
+
+// ---------- form ----------
+const thumbs = new Map();
+async function loadThumbs(jobId) {
+  for (const f of await db.byIndex('files', 'job_id', jobId)) {
+    if (f.blob && f.kind !== 'signature' && !thumbs.has(f.id)) thumbs.set(f.id, URL.createObjectURL(f.blob));
+  }
+}
+const fileStatusCache = new Map();
+async function refreshFileStatus(jobId) { for (const f of await db.byIndex('files', 'job_id', jobId)) fileStatusCache.set(f.id, f.status); }
+
+V.form = async (id) => {
+  let job = await db.get('jobs', id);
+  if (!job) { location.replace('#/'); return; }
+  const form = await loadForm(job.form_key);
+  if (!form) { location.replace('#/job/' + id); return; }
+  if (job.status === 'queued' || job.status === 'submitted') { location.replace('#/job/' + id + '/status'); return; }
+  const S = await loadState(job, form);
+  await loadThumbs(id); await refreshFileStatus(id);
+  if (cleanup) { try { cleanup(); } catch { /* */ } cleanup = null; }
+  closeModal();
+  app.className = 'form-app';
+  app.innerHTML = '';
+  let saveT = null;
+  const flush = () => { if (saveT) { clearTimeout(saveT); saveT = null; return sync.saveLocal(id, S); } return Promise.resolve(); };
+  const hooks = {
+    save: (_s, now) => { clearTimeout(saveT); saveT = setTimeout(() => { saveT = null; sync.saveLocal(id, S); }, now ? 0 : 250); },
+    back: async () => { await flush(); location.hash = '#/job/' + id; },
+    addPhoto: async (key, file) => {
+      const c = await compressPhoto(file);
+      const fid = fileId('ph');
+      const trk = /^trk_(\d+)_/.exec(key);
+      const trkDel = trk ? Object.values(S.grades).flatMap((g) => g.del).find((d) => String(d.id) === trk[1]) : null;
+      const kind = key === 'bdn' ? 'bdn' : key.startsWith('lop') ? 'lop' : trk ? (trkDel && trkDel.truck.type !== 'weigh' ? 'meter' : 'weighbridge') : key.startsWith('pip') ? 'meter' : 'photo';
+      const section = key === 'bdn' ? 'bdn_document' : key.startsWith('lop') ? 'lop_photo' : key.startsWith('vno') ? 'photo_not_signed' : key.startsWith('trk') || key.startsWith('pip') ? 'photo_supplier_measurement' : 'photo_' + key;
+      const takenAt = exifToIso(c.exif, S.order.utcOffset || S.survey.utcOffset);
+      await sync.addFile({ id: fid, job_id: id, kind, section, mime: c.mime, size: c.blob.size, blob: c.blob, taken_at: takenAt, exif_datetime_original: c.exif?.dateTimeOriginal || null, exif_offset: c.exif?.offset || null, label: `Photo · ${key}` });
+      thumbs.set(fid, URL.createObjectURL(c.blob)); fileStatusCache.set(fid, 'pending');
+      return { id: fid, from: c.from, to: c.to, taken_at: takenAt, w: c.width, h: c.height };
+    },
+    removePhoto: async (p) => {
+      const f = await db.get('files', p.id); if (!f) return;
+      if (f.status === 'uploaded') await db.put('files', { ...f, removed: true }); else await db.del('files', p.id);
+    },
+    submit: async () => {
+      if (S.meta?.submitted) return;
+      const v = await modal('Submit this survey?', form.submitSummary(), [{ label: 'Check again', value: null }, { label: 'Submit', value: 'go', kind: 'primary' }]);
+      if (!v) return;
+      const sigFiles = {};
+      for (const k of form.signatureKeys()) {
+        const sig = S.sig[k];
+        if (!sig.file_id) {
+          const png = await strokesToPng(sig.strokes);
+          sig.file_id = fileId('sig');
+          await db.put('files', { id: sig.file_id, job_id: id, kind: 'signature', section: 'signature_' + k, mime: 'image/png', size: png.size, blob: png, taken_at: null, status: 'pending', attempts: 0, label: 'Signature · ' + (form.SIGLBL[k] || k), created_at: new Date().toISOString() });
+        }
+        sigFiles[k] = sig.file_id;
+      }
+      const { payload, fileIds } = form.toPayload(S, { formVersion: job.form_version, sigFiles });
+      S.meta = S.meta || {}; S.meta.submitted = true; S.meta.submittedAt = new Date().toISOString();
+      await sync.saveLocal(id, S);
+      await sync.enqueueSubmission(id, payload, fileIds);
+      location.hash = '#/job/' + id + '/status';
+    },
+  };
+  const ctl = mountForm(app, {
+    form, job, state: S, readOnly: !!job.read_only, hooks,
+    thumb: (fid) => thumbs.get(fid) || null, fileStatus: (fid) => fileStatusCache.get(fid) || null,
+  });
+  const syncText = (j) => `Open on this device · ${j.synced_at ? (navigator.onLine ? 'Last synced ' : 'Not synced since ') + new Date(j.synced_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' (device time)' : 'Not synced yet'}`;
+  const updNet = async () => {
+    const files = await db.byIndex('files', 'job_id', id);
+    ctl.setNet(navigator.onLine, files.filter((f) => f.status !== 'uploaded' && !f.removed).length);
+  };
+  ctl.setSync(syncText(job));
+  if (job.read_only) ctl.setReadOnly(true, `<div class="ro-wrap">${roBanner(job)}</div>`);
+  updNet();
+  const onRO = (e) => { if (e.detail.jobId !== id) return; job = e.detail.job || job; ctl.setReadOnly(true, `<div class="ro-wrap">${roBanner({ ...job, read_only: true, read_only_reason: e.detail.reason })}</div>`); };
+  const onSynced = (e) => { if (e.detail.jobId !== id) return; ctl.setSync(syncText(e.detail.job)); };
+  const onFiles = async (e) => { if (e.detail.jobId !== id) return; await refreshFileStatus(id); updNet(); };
+  const onStale = async (e) => {
+    if (e.detail.jobId !== id) return;
+    const sv = e.detail.server;
+    const v = await modal('Newer version on GlobalBQS', `<p>This survey was also saved from another session (version ${esc(e.detail.serverRev)}${sv?.saved_at ? ', ' + esc(new Date(sv.saved_at).toLocaleString()) : ''}). Which version do you want to keep?</p><p class="muted small">The version you do not keep is replaced.</p>`,
+      [{ label: 'Use the saved version', value: 'server', kind: 'ghost' }, { label: "Keep this device's version", value: 'mine', kind: 'primary' }]);
+    if (!v) return;
+    await flush();
+    const r = await sync.resolveStale(id, v, sv);
+    if (v === 'server' && r.replaced) { toast('Saved version loaded.'); route(); } else toast('This device’s version is saved.');
+  };
+  const onSignin = (e) => { if (e.detail.jobId === id) toast('Please sign in again on this device to keep syncing.'); };
+  const onNet = () => updNet();
+  sync.bus.addEventListener('readonly', onRO); sync.bus.addEventListener('synced', onSynced); sync.bus.addEventListener('files', onFiles);
+  sync.bus.addEventListener('stale', onStale); sync.bus.addEventListener('signin', onSignin); sync.bus.addEventListener('net', onNet);
+  const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
+  document.addEventListener('visibilitychange', onHide); addEventListener('pagehide', flush);
+  cleanup = () => {
+    flush(); ctl.destroy();
+    sync.bus.removeEventListener('readonly', onRO); sync.bus.removeEventListener('synced', onSynced); sync.bus.removeEventListener('files', onFiles);
+    sync.bus.removeEventListener('stale', onStale); sync.bus.removeEventListener('signin', onSignin); sync.bus.removeEventListener('net', onNet);
+    document.removeEventListener('visibilitychange', onHide); removeEventListener('pagehide', flush);
+  };
+  // a newer server draft found while opening the link, with local unpushed changes: ask now
+  if (job.pending_stale) {
+    const ps = job.pending_stale; await db.put('jobs', { ...job, pending_stale: null });
+    sync.bus.dispatchEvent(new CustomEvent('stale', { detail: { jobId: id, serverRev: ps.rev, server: { rev: ps.rev, saved_at: ps.saved_at, payload: ps.payload } } }));
+  } else if (navigator.onLine && !job.read_only) sync.pushDraft(id);
+};
+
+// ---------- status ----------
+V.status = async (id) => {
+  const job = await db.get('jobs', id);
+  if (!job) { location.replace('#/'); return; }
+  const render = async () => {
+    const j = await db.get('jobs', id), ob = await db.get('outbox', id);
+    const files = (await db.byIndex('files', 'job_id', id)).filter((f) => !ob || (ob.file_ids || []).includes(f.id));
+    const sent = ob && ob.status === 'sent', blocked = ob && ob.status === 'blocked';
+    const s = j.summary || {};
+    const steps = [
+      ['Reviewed and signed by you', 'You reviewed the report and signed it as the appointed surveyor. Stored on this device.', true],
+      ['Submitted', sent ? `Received ${ob.sent_at ? 'at ' + esc(new Date(ob.sent_at).toLocaleString()) : ''}. Submission ID <span class="mono">${esc(ob.result?.submission_id || '—')}</span>.` : blocked ? esc(textFor(ob.last_error)) : navigator.onLine ? 'Sending… keep the app open.' : 'Waiting for signal. Keep the app on your device; it sends by itself. Opening the app ashore speeds it up.', sent],
+      ['Under review by GlobalBQS', 'Ops checks the survey and recalculates the figures. If something is unclear, ops contacts you.', false],
+      ['Report issued', 'GlobalBQS issues the report to the client.', false],
+    ];
+    const now = steps.findIndex((x) => !x[2]);
+    const pill = (f) => (f.status === 'uploaded' ? '<span class="pill ok">Uploaded</span>' : f.status === 'uploading' ? '<span class="pill info">Uploading</span>' : f.status === 'error' ? `<span class="pill warn" title="${esc(f.error || '')}">Retry ${f.attempts || 1}</span>` : '<span class="pill warn">Waiting</span>');
+    repaint(`${bar(sent ? 'Survey submitted' : blocked ? 'Not sent' : 'Waiting to send', `${esc(s.gbqs_reference || '')} · ${esc(s.vessel_name || '')}`, '#/job/' + id)}
+    <div class="content">
+      ${sent ? note('ok', `<b>Received by GlobalBQS.</b> Submission ID <span class="mono">${esc(ob.result?.submission_id || '')}</span>.${ob.result?.duplicate ? ' (already received earlier)' : ''}`)
+        : blocked ? note('bad', `<b>${esc(textFor(ob.last_error))}</b>`)
+        : note('warn', '<b>Not sent yet.</b> Everything is safe on this device. Do not delete the app or clear the browser until it shows Submitted.')}
+      ${!ob ? note('info', 'No submission on this device.') : ''}
+      <div class="card"><ol class="tl">${steps.map((x, i) => `<li class="${x[2] ? 'done' : i === now ? 'now' : ''}"><span class="d">${x[2] ? '✓' : ''}</span><div><b>${x[0]}</b><span>${x[1]}</span></div></li>`).join('')}</ol></div>
+      ${ob ? `<div class="card"><div class="row"><h3>Outbox</h3>${sent ? '<span class="pill ok">All uploaded</span>' : `<span class="pill warn">${ob.status === 'sending' ? 'Sending' : 'Waiting'}</span>`}</div>
+        <dl class="kv"><dt>Client reference</dt><dd class="mono small">${esc(ob.client_submission_id)}</dd><dt>Form version</dt><dd class="mono">${esc(ob.payload?.form_version || '')}</dd>${ob.last_error && !sent ? `<dt>Last attempt</dt><dd>${esc(textFor(ob.last_error))}</dd>` : ''}</dl>
+        <ul class="ob" id="obList"><li><span>Survey data and figures<small>${(JSON.stringify(ob.payload).length / 1024).toFixed(1)} kB</small></span>${sent ? '<span class="pill ok">Sent</span>' : '<span class="pill warn">Waiting</span>'}</li>
+        ${files.map((f) => `<li data-file="${esc(f.id)}"><span>${esc(f.label || f.kind)}<small>${((f.size || 0) / 1048576).toFixed(2)} MB</small></span>${pill(f)}</li>`).join('')}</ul>
+        ${!sent && !blocked ? `<button class="btn ghost block" type="button" id="sendNow" ${navigator.onLine ? '' : 'disabled'}>Send now</button>` : ''}</div>` : ''}
+      ${note('info', 'Job cancelled by the client while you were offline? Your submission will still be received and checked by ops. You do not need to do anything.')}
+      <button class="btn primary block" type="button" data-go="#/">Back to my jobs</button>
+    </div>`);
+    const sn = $('#sendNow'); if (sn) sn.onclick = () => { sn.disabled = true; sync.processOutbox(id, { force: true }); };
+  };
+  await render();
+  let t = null;
+  const re = (e) => { if (e.detail && e.detail.jobId && e.detail.jobId !== id) return; clearTimeout(t); t = setTimeout(render, 120); };
+  sync.bus.addEventListener('outbox', re); sync.bus.addEventListener('files', re); sync.bus.addEventListener('net', re);
+  cleanup = () => { sync.bus.removeEventListener('outbox', re); sync.bus.removeEventListener('files', re); sync.bus.removeEventListener('net', re); };
+  if (navigator.onLine) sync.processOutbox(id, { force: true });
+};
+
+// ---------- router ----------
+async function route() {
+  routeSeq++;
+  const h = location.hash.replace(/^#/, '') || '/';
+  let m;
+  try {
+    if ((m = /^\/j\/([0-9a-fA-F]{64})\/?$/.exec(h))) return await V.link(m[1]);
+    if ((m = /^\/install\/([0-9a-f]{64})$/.exec(h))) return await V.install(m[1]);
+    if ((m = /^\/signin\/([0-9a-f]{64})$/.exec(h))) return await V.signin(m[1]);
+    if ((m = /^\/takeover\/([0-9a-f]{64})$/.exec(h))) return await V.takeover(m[1]);
+    if ((m = /^\/job\/([\w-]+)\/(check|form|status)$/.exec(h))) return await V[m[2]](m[1]);
+    if ((m = /^\/job\/([\w-]+)$/.exec(h))) return await V.job(m[1]);
+    if (/^\/j\//.test(h)) return errorScreen('Link not valid', textFor('invalid_link'));
+    return await V.jobs();
+  } catch (e) {
+    console.error(e);
+    errorScreen('Something went wrong', 'The app ran into a problem. Your saved work is not affected. ' + (e && e.message ? '(' + e.message + ')' : ''), '<button class="btn primary block" type="button" data-reload>Reload</button>');
+  }
+}
+
+// a manifest whose start_url opens this job (Android/Chrome install from the job page)
+function setJobManifest(token) {
+  try {
+    const base = new URL('./', location.href).href;
+    const mf = { name: 'GlobalBQS Forms', short_name: 'GBQS Forms', id: base, start_url: base + '#/j/' + token, scope: base, display: 'standalone', background_color: '#0a1a33', theme_color: '#0a1a33',
+      icons: [{ src: base + 'assets/icons/icon-192.png', sizes: '192x192', type: 'image/png' }, { src: base + 'assets/icons/icon-512.png', sizes: '512x512', type: 'image/png' }, { src: base + 'assets/icons/maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' }] };
+    const link = document.querySelector('link[rel="manifest"]');
+    if (link) link.href = URL.createObjectURL(new Blob([JSON.stringify(mf)], { type: 'application/manifest+json' }));
+  } catch { /* keep the static manifest */ }
+}
+
+// ---------- service worker + update prompt ----------
+function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+  let reloading = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => { if (reloading) location.reload(); });
+  navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' }).then((reg) => {
+    const prompt = (w) => {
+      const b = $('#updateBar'); b.hidden = false;
+      $('#updateBtn').onclick = () => { reloading = true; w.postMessage({ type: 'skipWaiting' }); };
+    };
+    if (reg.waiting && navigator.serviceWorker.controller) prompt(reg.waiting);
+    reg.addEventListener('updatefound', () => {
+      const w = reg.installing; if (!w) return;
+      w.addEventListener('statechange', () => { if (w.state === 'installed' && navigator.serviceWorker.controller) prompt(w); });
+    });
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+    setInterval(() => reg.update().catch(() => {}), 60 * 60 * 1000);
+  }).catch(() => { /* no SW (e.g. http) */ });
+}
+
+// ---------- boot ----------
+async function boot() {
+  // /j/<token> path (static host 404 fallback / SW) -> hash route
+  const pm = /\/j\/([0-9a-fA-F]{64})\/?$/.exec(location.pathname);
+  if (pm) { location.replace(location.pathname.replace(/j\/[0-9a-fA-F]{64}\/?$/, '') + '#/j/' + pm[1].toLowerCase()); return; }
+  if (ENV.isDemo) document.documentElement.classList.add('is-demo');
+  await db.ready();
+  addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); window.__bip = e; dispatchEvent(new Event('gbqs:bip')); });
+  addEventListener('hashchange', route);
+  addEventListener('online', updateNetPills); addEventListener('offline', updateNetPills);
+  document.addEventListener('click', (e) => {
+    const g = e.target.closest('[data-go]'); if (g && !g.disabled) { e.preventDefault(); location.hash = g.dataset.go; return; }
+    if (e.target.closest('[data-reload]')) location.reload();
+  });
+  sync.startLoop();
+  registerSW();
+  route();
+}
+boot();
+export { ApiError, offsetMin, ICON };
