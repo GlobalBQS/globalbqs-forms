@@ -1,16 +1,16 @@
-export const __v = '1.1.11-20261023-3d362bf4';
+export const __v = '1.1.12-20261023-6b99a1aa';
 // B221 (Bunker Quantity Survey), On-/Off-Hire Bunker, On-/Off-Hire B+C and On-/Off-Hire Condition.
 // One factory, four approved mockups ("as received"): the B+C mockup is the union of the bunker part
 // (vessel, fuel types & logbook, tank soundings, result) and the condition part (hull & main deck,
 // deck fittings & safety, cargo holds, engine room, damages & conclusion). Shared components from
 // components.js (tank rows, signatures with the "sign only when complete" rule, photos, LOP, review).
-import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.11-20261023-3d362bf4';
-import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.11-20261023-3d362bf4';
+import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.12-20261023-6b99a1aa';
+import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.12-20261023-6b99a1aa';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, reviewList, flagList, hasSig, portNow, portOffset, offsetPicker, sigGate, gateCorrectionsFrom,
-  tankKey, usedTankKeys, duplicateTanks, freeTanks,
-} from './components.js?v=1.1.11-20261023-3d362bf4';
+  tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled, dropPhotos,
+} from './components.js?v=1.1.12-20261023-6b99a1aa';
 
 const BASE_GRADES = ['VLSFO', 'HSFO', 'LSMGO', 'MDO'];
 const DO_GRADES = ['LSMGO', 'MGO', 'MDO', 'DMA', 'DMB', 'DMZ', 'ULSMGO'];
@@ -279,12 +279,13 @@ export function create(key) {
     ${sec.id !== 'er' ? `<div class="secph">${photoBlock('sec_' + sec.id, sec.t + ' · overview photos')}</div>` : ''}</section>`;
   function holdBlock(h, i) {
     const p = `cond.holds.${i}`;
-    const sum = `<button class="tank-sum" type="button" data-act="holdToggle" data-i="${i}" data-keep aria-expanded="${!!h.open}"><span class="tsum" data-calc="hsum:${i}"></span>${ICON.chev}</button>`;
-    if (!h.open) return `<div class="tank">${sum}</div>`;
-    return `<div class="tank open">${sum}<div class="tank-body">
+    const sum = `<div class="tank-head"><button class="tank-sum" type="button" data-act="holdToggle" data-i="${i}" data-keep aria-expanded="${!!h.open}"><span class="tsum" data-calc="hsum:${i}"></span>${ICON.chev}</button>
+      <button class="icon-btn" type="button" data-act="delHold" data-i="${i}" aria-label="Remove hold ${esc(h.hold || i + 1)}" title="Remove hold">${ICON.x}</button></div>`;
+    if (!h.open) return `<div class="tank" data-hold="${i}">${sum}</div>`;
+    return `<div class="tank open" data-hold="${i}">${sum}<div class="tank-body">
       <div class="tank-top"><div class="grow">${selectField('Hold no.', p + '.hold', Array.from({ length: 9 }, (_, k) => [String(k + 1), 'Hold ' + (k + 1)]), { req: 1, taken: new Set(S().cond.holds.filter((x, k) => k !== i && x.hold).map((x) => x.hold)) })}</div>
         ${i > 0 ? `<button class="btn ghost small" type="button" data-act="copyHold" data-i="${i}">Copy ratings from previous hold</button>` : ''}
-        <button class="icon-btn" type="button" data-act="delHold" data-i="${i}" aria-label="Remove hold ${esc(h.hold || i + 1)}">${ICON.x}</button></div>
+</div>
       <div class="clist">${HOLD_ITEMS().map(([k, n]) => {
         const it = h.items[k] || (h.items[k] = { st: '', rem: '' }), q = `${p}.items.${k}`, d = it.st === 'damaged';
         return `<div class="ci${it.st ? ' st-' + it.st : ''}"><div class="ci-h"><span class="nm">${esc(n)}</span>${statSeg(q + '.st', n)}</div>
@@ -491,11 +492,27 @@ export function create(key) {
         HOLD_ITEMS().forEach(([k]) => { const v = (pr.items[k] || {}).st || ''; h.items[k] = h.items[k] || { st: '', rem: '' }; h.items[k].st = v; linkDamage(`hold_${h.id}_${k}`, 'hold', holdLbl(h, k), v === 'damaged'); });
         return done('Ratings copied; check and adjust per item');
       }
-      case 'delHold': { const h = C.holds.splice(+b.dataset.i, 1)[0]; if (h) HOLD_ITEMS().forEach(([k]) => { delete s.photos[`hold_${h.id}_${k}`]; linkDamage(`hold_${h.id}_${k}`, 'hold', '', false); }); return done('Hold removed'); }
+      case 'delHold': {
+        const h = C.holds[+b.dataset.i]; if (!h) return true;
+        const filled = HOLD_ITEMS().some(([k]) => (h.items[k] || {}).st || String((h.items[k] || {}).rem || '').trim() || (s.photos[`hold_${h.id}_${k}`] || []).length);
+        removeRow(`Remove Hold ${h.hold || +b.dataset.i + 1}?`, filled, () => {
+          const k = C.holds.indexOf(h); if (k >= 0) C.holds.splice(k, 1);
+          HOLD_ITEMS().forEach(([x]) => { dropPhotos(`hold_${h.id}_${x}`); linkDamage(`hold_${h.id}_${x}`, 'hold', '', false); });
+        }, () => done('Hold removed'));
+        return true;
+      }
       case 'addStv': C.steve.rows.push({ id: nid(), loc: '', desc: '' }); return done();
-      case 'delStv': { const r = C.steve.rows.splice(+b.dataset.i, 1)[0]; if (r) delete s.photos['stv_' + r.id]; return done('Stevedore damage removed'); }
+      case 'delStv': {
+        const r = C.steve.rows[+b.dataset.i]; if (!r) return true;
+        removeRow(`Remove stevedore damage ${+b.dataset.i + 1}?`, rowFilled(r) || (s.photos['stv_' + r.id] || []).length, () => { const k = C.steve.rows.indexOf(r); if (k >= 0) C.steve.rows.splice(k, 1); dropPhotos('stv_' + r.id); }, () => done('Stevedore damage removed'));
+        return true;
+      }
       case 'addDmg': C.damages.push({ id: nid(), src: '', srcLbl: '', area: '', loc: '', desc: '', cmp: '' }); return done();
-      case 'delDmg': { const d = C.damages.splice(+b.dataset.i, 1)[0]; if (d) delete s.photos['dmg_' + d.id]; return done('Damage removed'); }
+      case 'delDmg': {
+        const d = C.damages[+b.dataset.i]; if (!d) return true;
+        removeRow(`Remove damage ${+b.dataset.i + 1}?`, rowFilled({ ...d, src: '', srcLbl: '' }) || (s.photos['dmg_' + d.id] || []).length, () => { const k = C.damages.indexOf(d); if (k >= 0) C.damages.splice(k, 1); dropPhotos('dmg_' + d.id); }, () => done('Damage removed'));
+        return true;
+      }
       default: return false;
     }
   }

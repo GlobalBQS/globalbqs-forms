@@ -1,13 +1,13 @@
-export const __v = '1.1.11-20261023-3d362bf4';
+export const __v = '1.1.12-20261023-6b99a1aa';
 // Bunker Delivery Survey (form_key bunker_delivery_survey) - port of the approved mockup "as received",
 // with prefill from the job, and the submit payload in contract gbqs.forms/1.
-import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.11-20261023-3d362bf4';
-import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.11-20261023-3d362bf4';
+import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.12-20261023-6b99a1aa';
+import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.12-20261023-6b99a1aa';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker, sigGate,
-  tankKey, usedTankKeys, duplicateTanks, freeTanks,
-} from './components.js?v=1.1.11-20261023-3d362bf4';
+  tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled,
+} from './components.js?v=1.1.12-20261023-6b99a1aa';
 
 export const key = 'bunker_delivery_survey';
 export const title = 'Bunker Delivery Survey';
@@ -565,9 +565,17 @@ export function act(a, b) {
       return true;
     }
     case 'addDel': s.grades[b.dataset.g].del.push(D()); return done();
-    case 'delDel': s.grades[b.dataset.g].del.splice(+b.dataset.j, 1); return done('Delivery removed');
+    case 'delDel': {
+      const L = s.grades[b.dataset.g].del, d = L[+b.dataset.j]; if (!d) return true;
+      removeRow(`Remove ${b.dataset.g} delivery ${+b.dataset.j + 1}?`, rowFilled({ ...d, truck: { ...d.truck, type: '' } }), () => { const k = L.indexOf(d); if (k >= 0) L.splice(k, 1); }, () => done('Delivery removed'));
+      return true;
+    }
     case 'addSmp': s.grades[b.dataset.g].del[+b.dataset.j].extra.push({ id: nid(), type: '', seal: '', desc: '', remark: '' }); return done();
-    case 'delSmp': s.grades[b.dataset.g].del[+b.dataset.j].extra.splice(+b.dataset.k, 1); return done('Sample removed');
+    case 'delSmp': {
+      const L = s.grades[b.dataset.g].del[+b.dataset.j].extra, r = L[+b.dataset.k]; if (!r) return true;
+      removeRow(`Remove added sample ${+b.dataset.k + 1}?`, rowFilled(r), () => { const k = L.indexOf(r); if (k >= 0) L.splice(k, 1); }, () => done('Sample removed'));
+      return true;
+    }
     case 'copyTanks': {
       const have = usedTankKeys(s.after.tanks, famOf); let n = 0; // a tank is copied only once per list
       // copy completely: method, readings, TOV, temperature, density, trim/list flag; the surveyor overwrites the tanks that received bunkers

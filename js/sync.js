@@ -1,8 +1,8 @@
-export const __v = '1.1.11-20261023-3d362bf4';
+export const __v = '1.1.12-20261023-6b99a1aa';
 // Sync engine: draft push (debounced, with rev), file uploads (register -> PUT -> confirm) and the outbox
 // (files first, then submit; idempotent client ids; retry with backoff). Emits events on `bus`.
-import * as db from './db.js?v=1.1.11-20261023-3d362bf4';
-import { call, putFile, ApiError } from './api.js?v=1.1.11-20261023-3d362bf4';
+import * as db from './db.js?v=1.1.12-20261023-6b99a1aa';
+import { call, putFile, ApiError } from './api.js?v=1.1.12-20261023-6b99a1aa';
 
 export const bus = new EventTarget();
 const emit = (type, detail) => bus.dispatchEvent(new CustomEvent(type, { detail }));
@@ -239,6 +239,11 @@ async function bytesFor(f) {
   }
 }
 
+/** update a file record only if it still exists (a photo removed during an upload must not come back) */
+async function patchFile(id, patch) {
+  const cur = await db.get('files', id); if (!cur) return null;
+  const next = { ...cur, ...patch }; await db.put('files', next); return next;
+}
 async function uploadOne(job, f) {
   const bytes = await bytesFor(f); // read before registering: an unreadable file is detected here, not as a network error
   const reg = await call('/file', {
@@ -246,14 +251,13 @@ async function uploadOne(job, f) {
     body: { client_file_id: f.id, kind: f.kind, section: f.section || null, mime: f.mime, size_bytes: bytes.byteLength, taken_at: f.taken_at || null },
   });
   if (!reg.already_uploaded) {
-    await db.put('files', { ...(await db.get('files', f.id)), status: 'uploading', storage_path: reg.storage_path });
+    if (!(await patchFile(f.id, { status: 'uploading', storage_path: reg.storage_path }))) return; // removed meanwhile
     emit('files', { jobId: job.job_id });
     const type = reg.upload.content_type || f.mime;
     await putFile(reg.upload.url, new Blob([bytes], { type }), type);
   }
   await call('/file/confirm', { method: 'POST', session: job.session, body: { client_file_id: f.id } });
-  const cur = await db.get('files', f.id);
-  await db.put('files', { ...cur, status: 'uploaded', storage_path: reg.storage_path, uploaded_at: new Date().toISOString(), error: null, error_text: null });
+  await patchFile(f.id, { status: 'uploaded', storage_path: reg.storage_path, uploaded_at: new Date().toISOString(), error: null, error_text: null });
   emit('files', { jobId: job.job_id });
 }
 
@@ -272,7 +276,8 @@ export function uploadFiles(jobId, onlyIds = null) {
       if (f.next_at && Date.now() < f.next_at && !onlyIds) { allDone = false; continue; }
       try { await uploadOne(job, f); } catch (e) {
         if (await handleAuthError(jobId, e)) return false;
-        const cur = (await db.get('files', f.id)) || f;
+        const cur = await db.get('files', f.id);
+        if (!cur) continue; // removed (e.g. its row was removed): never write it back
         if (e instanceof FileUnreadable) {
           // a photo that this device can no longer read: do not block the survey; ops sees a placeholder
           await db.put('files', { ...cur, status: 'lost', error: 'unreadable', error_text: 'This file could not be read on this device and was not sent.' });

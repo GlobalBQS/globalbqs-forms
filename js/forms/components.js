@@ -1,12 +1,13 @@
-export const __v = '1.1.11-20261023-3d362bf4';
+export const __v = '1.1.12-20261023-6b99a1aa';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate } from '../ui.js?v=1.1.11-20261023-3d362bf4';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.11-20261023-3d362bf4';
+import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.12-20261023-6b99a1aa';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.12-20261023-6b99a1aa';
 
 export const ctx = {
+  removePhoto: null, // app hook: drop a photo file (not uploaded / not linked)
   S: null,          // form state (the draft)
   form: null,       // form module
   readOnly: false,
@@ -281,4 +282,25 @@ export function gateCorrectionsFrom(s, nominated = []) {
     if (String(f.gradesNote || '').trim()) out.push({ field: 'grades', expected_value: null, corrected_value: null, expected_survey_type: null, remark: f.gradesNote.trim() });
   }
   return out;
+}
+
+// ---------- removing a repeatable row ----------
+/** photos of a removed row: drop the files (pending ones are not uploaded) and the references */
+export function dropPhotos(key) {
+  const S = ctx.S; (S.photos[key] || []).forEach((p) => { if (ctx.removePhoto) ctx.removePhoto(p); }); delete S.photos[key];
+}
+/** any value filled in (ignores ids, open flags and empty values) */
+export function rowFilled(o, skip = ['id', 'open']) {
+  if (o == null || o === '' || o === false) return false;
+  if (Array.isArray(o)) return o.some((x) => rowFilled(x, skip));
+  if (typeof o === 'object') return Object.entries(o).some(([k, v]) => !skip.includes(k) && rowFilled(v, skip));
+  return true;
+}
+/** remove a row: short confirmation when something is filled in; returns a promise (true = removed) */
+export async function removeRow(title, filled, doRemove, done) {
+  if (filled) {
+    const v = await modal(title, '<p>What is entered in this row (ratings, remarks, photos) is removed. Open items and totals are updated.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove', value: 'rm', kind: 'danger' }]);
+    if (!v) return false;
+  }
+  doRemove(); if (done) done(); return true;
 }

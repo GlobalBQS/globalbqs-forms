@@ -1,17 +1,17 @@
-export const __v = '1.1.11-20261023-3d362bf4';
+export const __v = '1.1.12-20261023-6b99a1aa';
 // Form runtime: renders one step at a time (step rail + Back/Next), live calculations, locks after signing,
 // signature pads, photos, timesheet drag & drop, and the generic actions shared by all forms.
 // A form module supplies: STEPS, PHASE, SIGLBL, R (step renderers), CALC, issues(), flags(), act(), title.
-import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.11-20261023-3d362bf4';
-import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG } from './components.js?v=1.1.11-20261023-3d362bf4';
-import { parseNum } from './calc.js?v=1.1.11-20261023-3d362bf4';
-import { BUILD } from '../../config.js?v=1.1.11-20261023-3d362bf4';
+import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.12-20261023-6b99a1aa';
+import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled } from './components.js?v=1.1.12-20261023-6b99a1aa';
+import { parseNum } from './calc.js?v=1.1.12-20261023-6b99a1aa';
+import { BUILD } from '../../config.js?v=1.1.12-20261023-6b99a1aa';
 const APP_VERSION = String(BUILD.version || 'dev').split('-')[0];
 
 export function mountForm(root, opts) {
   const { form, job, hooks } = opts;
   ctx.S = opts.state; ctx.form = form; ctx.readOnly = !!opts.readOnly;
-  ctx.thumb = opts.thumb || (() => null); ctx.fileStatus = opts.fileStatus || (() => null);
+  ctx.removePhoto = (opts.hooks && opts.hooks.removePhoto) || null; ctx.thumb = opts.thumb || (() => null); ctx.fileStatus = opts.fileStatus || (() => null);
   const S = ctx.S;
   S.ui = S.ui || {}; if (S.ui.step == null) S.ui.step = 0;
   let uid = S.meta?.uid || 1000;
@@ -209,10 +209,20 @@ export function mountForm(root, opts) {
       markSaved(); render(false); toast('Tank removed'); return;
     }
     if (a === 'addLop') { S.lops.push(newLop(nextId())); markSaved(); render(false); return; }
-    if (a === 'delLop') { const l = S.lops.splice(+b.dataset.i, 1)[0]; if (l) { (S.photos['lop_' + l.id] || []).forEach((p) => hooks.removePhoto(p)); delete S.photos['lop_' + l.id]; } markSaved(); render(false); toast('Letter of Protest removed'); return; }
+    if (a === 'delLop') {
+      const l = S.lops[+b.dataset.i]; if (!l) return;
+      await removeRow(`Remove Letter of Protest ${+b.dataset.i + 1}?`, rowFilled({ ...l, dir: '' }) || (S.photos['lop_' + l.id] || []).length, () => {
+        const k = S.lops.indexOf(l); if (k >= 0) S.lops.splice(k, 1); (S.photos['lop_' + l.id] || []).forEach((p) => hooks.removePhoto(p)); delete S.photos['lop_' + l.id];
+      }, () => { markSaved(); render(false); toast('Letter of Protest removed'); });
+      return;
+    }
     if (['tsUp', 'tsDown', 'tsDel', 'sortTs', 'addEv'].includes(a) && form.PHASE.ts && signed('ts')) { toast('The timesheet is signed. Unlock it first.'); return; }
     if (a === 'tsUp' || a === 'tsDown') { const i = +b.dataset.i; moveTs(S.ts.events, i, a === 'tsUp' ? i - 1 : i + 1); markSaved(); render(false); const nb = main.querySelector(`[data-act="${a}"][data-i="${a === 'tsUp' ? i - 1 : i + 1}"]`); if (nb && !nb.disabled) nb.focus(); return; }
-    if (a === 'tsDel') { const ev = S.ts.events[+b.dataset.i]; if (ev && ev.custom) { S.ts.events.splice(+b.dataset.i, 1); markSaved(); render(false); toast('Event removed'); } return; }
+    if (a === 'tsDel') {
+      const ev = S.ts.events[+b.dataset.i]; if (!ev || !ev.custom) return;
+      await removeRow(`Remove “${ev.label}”?`, !!ev.t, () => { const k = S.ts.events.indexOf(ev); if (k >= 0) S.ts.events.splice(k, 1); }, () => { markSaved(); render(false); toast('Event removed'); });
+      return;
+    }
     if (a === 'sortTs') { sortTs(S.ts.events); markSaved(); render(false); toast('Sorted by date and time'); return; }
     if (a === 'now') { const i = +b.dataset.i, n = form.portNow(); Object.assign(S.ts.events[i], { d: n.d, t: n.t }); markSaved(); const di = $('#tsd_' + i), ti = $('#ts_' + i); if (di) di.value = n.d; if (ti) ti.value = n.t; refresh(); return; }
     if (a === 'sigClear') { delete S.sig[b.dataset.key]; markSaved(); render(false); return; }
