@@ -1,10 +1,10 @@
-export const __v = '1.1.9-20261023-64ef56b4';
+export const __v = '1.1.10-20261023-39e8b4ad';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate } from '../ui.js?v=1.1.9-20261023-64ef56b4';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.9-20261023-64ef56b4';
+import { esc, ICON, note, nowIn, fmtDate } from '../ui.js?v=1.1.10-20261023-39e8b4ad';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.10-20261023-39e8b4ad';
 
 export const ctx = {
   S: null,          // form state (the draft)
@@ -147,14 +147,30 @@ export const METHODS = [['S', 'Sounding'], ['U', 'Ullage'], ['G', 'Gauge']];
 export const METHOD_KEY = { S: 'sounding', U: 'ullage', G: 'gauge' };
 export const tovOf = (t) => (t.method === 'G' ? t.reading : t.tov); // gauge reading is the TOV (m³)
 
-/** <select> options for a vessel tank, grouped by grade family (fo / do) */
-export function tankOptions(t, VT, family, famLabel = { fo: 'Fuel oil tanks', do: 'Gas oil / diesel tanks' }) {
-  const grp = (f) => `<optgroup label="${famLabel[f]}">${VT.filter((x) => x.fam === f).map((x) => `<option value="${esc(x.name)}" ${x.name === t.name ? 'selected' : ''}>${esc(x.name)}${x.isNew ? ' · new' : ''}</option>`).join('')}</optgroup>`;
+/** a tank is unique per tank list by family + name (case-insensitive); "Serv tk" may exist as fo and as do tank */
+export const tankKey = (fam, name) => fam + '|' + String(name || '').trim().toLowerCase();
+/** keys of the tanks used in a list, except row `except` */
+export function usedTankKeys(list, famOf, except = -1) {
+  const u = new Set(); (list || []).forEach((t, k) => { if (k !== except && t && t.name) u.add(tankKey(famOf(t.grade), t.name)); }); return u;
+}
+/** tank names listed more than once in one list */
+export function duplicateTanks(list, famOf) {
+  const seen = new Map(), dup = new Set();
+  (list || []).forEach((t) => { if (!t || !t.name) return; const k = tankKey(famOf(t.grade), t.name); if (seen.has(k)) dup.add(seen.get(k)); else seen.set(k, t.name); });
+  return [...dup];
+}
+/** number of vessel tanks of a family not yet in the list */
+export const freeTanks = (VT, fam, used) => VT.filter((x) => x.fam === fam && !used.has(tankKey(fam, x.name))).length;
+/** <select> options for a vessel tank, grouped by grade family (fo / do); tanks already in this list are disabled */
+export function tankOptions(t, VT, family, used = new Set(), famLabel = { fo: 'Fuel oil tanks', do: 'Gas oil / diesel tanks' }) {
+  const opt = (x) => { const own = x.name === t.name, taken = !own && used.has(tankKey(family, x.name));
+    return `<option value="${esc(x.name)}" ${own ? 'selected' : ''} ${taken ? 'disabled' : ''}>${esc(x.name)}${x.isNew ? ' · new' : ''}${taken ? ' · already in this list' : ''}</option>`; };
+  const grp = (f) => `<optgroup label="${famLabel[f]}">${VT.filter((x) => x.fam === f).map(opt).join('')}</optgroup>`;
   const sel = t.name && !VT.some((x) => x.fam === family && x.name === t.name) ? `<option value="${esc(t.name)}" selected>${esc(t.name)}</option>` : '';
   return `<option value="" ${t.name ? '' : 'selected'}>Choose a tank…</option>${sel}${grp(family)}<option value="__new">Tank not on the list…</option>`;
 }
 /**
- * One vessel tank row. o: {VT, family, densHtml (override for the density cell), extraHtml, newHint}
+ * One vessel tank row. o: {VT, family, used (keys in this list, other rows), densHtml (override for the density cell), extraHtml, newHint}
  * Calculated parts render into data-calc="tsum:<phase>:<i>" and "tank:<phase>:<i>" (form CALC).
  */
 export function tankCard(phase, t, i, o) {
@@ -165,7 +181,7 @@ export function tankCard(phase, t, i, o) {
   const vt = o.VT.find((x) => x.name === t.name && x.fam === o.family);
   return `<div class="tank open" data-tank="${phase}:${i}">${sum}<div class="tank-body">
     <div class="tank-top">
-      <div class="field grow"><label for="tn_${t.id}">Tank</label><div class="ctl"><select id="tn_${t.id}" data-bind="${p}.name" data-tanksel="${phase}:${i}" data-req="1">${tankOptions(t, o.VT, o.family)}</select></div>
+      <div class="field grow"><label for="tn_${t.id}">Tank</label><div class="ctl"><select id="tn_${t.id}" data-bind="${p}.name" data-tanksel="${phase}:${i}" data-req="1">${tankOptions(t, o.VT, o.family, o.used)}</select></div>
         ${vt && vt.isNew ? '<p class="hint"><span class="pill info">New</span> Added on board; ops will check it and add it to the vessel tank list.</p>' : ''}</div>
       <div class="field"><span class="lbl">Method</span><div class="seg sm" role="group" aria-label="Sounding, ullage or gauge">
         ${METHODS.map(([v, l]) => `<button type="button" data-act="set" data-path="${p}.method" data-val="${v}" aria-pressed="${t.method === v}">${l}</button>`).join('')}</div></div>

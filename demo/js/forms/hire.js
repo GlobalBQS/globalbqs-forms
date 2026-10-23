@@ -1,15 +1,16 @@
-export const __v = '1.1.9-20261023-64ef56b4';
+export const __v = '1.1.10-20261023-39e8b4ad';
 // B221 (Bunker Quantity Survey), On-/Off-Hire Bunker, On-/Off-Hire B+C and On-/Off-Hire Condition.
 // One factory, four approved mockups ("as received"): the B+C mockup is the union of the bunker part
 // (vessel, fuel types & logbook, tank soundings, result) and the condition part (hull & main deck,
 // deck fittings & safety, cargo holds, engine room, damages & conclusion). Shared components from
 // components.js (tank rows, signatures with the "sign only when complete" rule, photos, LOP, review).
-import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.9-20261023-64ef56b4';
-import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.9-20261023-64ef56b4';
+import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.10-20261023-39e8b4ad';
+import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.10-20261023-39e8b4ad';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, reviewList, flagList, hasSig, portNow, portOffset, offsetPicker, sigGate, gateCorrectionsFrom,
-} from './components.js?v=1.1.9-20261023-64ef56b4';
+  tankKey, usedTankKeys, duplicateTanks, freeTanks,
+} from './components.js?v=1.1.10-20261023-39e8b4ad';
 
 const BASE_GRADES = ['VLSFO', 'HSFO', 'LSMGO', 'MDO'];
 const DO_GRADES = ['LSMGO', 'MGO', 'MDO', 'DMA', 'DMB', 'DMZ', 'ULSMGO'];
@@ -170,6 +171,7 @@ export function create(key) {
           if (!calcTank(t)) add('tanks', t.name + ': volume, temperature or density');
         });
       }
+      duplicateTanks(s.rob.tanks, famOf).forEach((n) => add('tanks', n + ': listed twice – remove one'));
       if (V.lops) {
         if (!s.lop) add('result', 'Any Letters of Protest?');
         if (s.lop === 'yes') {
@@ -254,7 +256,7 @@ export function create(key) {
     const s = S(); const tanks = s.rob.tanks.map((t, i) => [t, i]).filter(([t]) => t.grade === g);
     return `<section class="card" data-lockphase="bunker">
       <div class="card-h"><h3><span class="gchip">${g}</span>${tanks.length} ${tanks.length === 1 ? 'tank' : 'tanks'}</h3><span data-calc="sub:${g}"></span></div>
-      ${tanks.length ? `<div class="tanks">${tanks.map(([t, i]) => tankCard('rob', t, i, { VT: s.VT, family: famOf(g) })).join('')}</div>` : '<p class="empty">No tanks added yet.</p>'}
+      ${tanks.length ? `<div class="tanks">${tanks.map(([t, i]) => tankCard('rob', t, i, { VT: s.VT, family: famOf(g), used: usedTankKeys(s.rob.tanks, famOf, i) })).join('')}</div>` : '<p class="empty">No tanks added yet.</p>'}
       <button class="btn add" type="button" data-act="addTank" data-grade="${g}">+ Add ${g} tank</button>
       <div data-calc="logdiff:${g}"></div></section>`;
   }
@@ -470,6 +472,8 @@ export function create(key) {
     switch (a) {
       case 'grade': { const g = b.dataset.g; s.grades[g].on = !s.grades[g].on; return done(); }
       case 'addTank': {
+        const fam = famOf(b.dataset.grade);
+        if (!freeTanks(s.VT, fam, usedTankKeys(s.rob.tanks, famOf))) toast(`All ${fam === 'do' ? 'gas oil / diesel' : 'fuel oil'} tanks of this vessel are already in this list. Use “Tank not on the list…” only for a tank that is missing.`);
         s.rob.tanks.push(T(b.dataset.grade)); fm.markSaved(); fm.render(false);
         const sel = document.querySelector(`select[data-tanksel="rob:${s.rob.tanks.length - 1}"]`); if (sel) sel.focus(); return true;
       }
@@ -497,6 +501,9 @@ export function create(key) {
     if (m) { const I = ITEMS[m[1]]; linkDamage('it_' + m[1], I.sec, I.secT + ' · ' + I.n, v === 'damaged'); }
     m = pth.match(/^cond\.holds\.(\d+)\.items\.(\w+)\.st$/);
     if (m) { const h = S().cond.holds[+m[1]]; linkDamage(`hold_${h.id}_${m[2]}`, 'hold', holdLbl(h, m[2]), v === 'damaged'); }
+  }
+  function tankNameTaken(ph, i, name) {
+    const s = S(), t = s.rob.tanks[i]; return usedTankKeys(s.rob.tanks, famOf, i).has(tankKey(famOf(t.grade), name));
   }
   function addNewTank(ph, i, name, cap) {
     const s = S(), t = s.rob.tanks[i], fam = famOf(t.grade);
@@ -604,7 +611,7 @@ export function create(key) {
 
   return {
     key, title: V.title, versionLabel: V.version, variant: V,
-    STEPS, PHASE, SIGLBL, R, CALC, issues, flags, act, afterSet, addNewTank, submitSummary, toPayload, initState, tankCapFor,
+    STEPS, PHASE, SIGLBL, R, CALC, issues, flags, act, afterSet, addNewTank, tankNameTaken, submitSummary, toPayload, initState, tankCapFor,
     portNowText: () => `${portNow().t} LT`, portNow,
     gateGrades: () => [], // hire/B221 jobs have no nominated quantities: the grades check is skipped
     signatureKeys: () => Object.keys(S().sig).filter(hasSig),

@@ -336,6 +336,9 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
 .flags li{display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border-radius:9px; background:var(--surface-2); border:1px solid var(--line); font-size:14px}
 .flags li .pill{flex:none}
 .foot{position:fixed; left:0; right:0; bottom:0; top:auto; z-index:20; margin:0; background:var(--surface); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom,0px)}
+/* iOS Chrome/Safari: while the browser toolbar slides away during a scroll, a fixed bar can briefly sit above the
+   new bottom edge. This band (below the bar, normally off-screen) keeps form content from showing under it. */
+.foot::after{content:""; position:absolute; left:0; right:0; top:100%; height:160px; background:var(--surface); pointer-events:none}
 .foot-in{max-width:1180px; margin:0 auto; padding-block:10px; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px)); display:flex; align-items:center; justify-content:space-between; gap:12px}
 .foot .where{font-size:13px; color:var(--muted); text-align:center; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .foot .where b{color:var(--ink); font-weight:600}

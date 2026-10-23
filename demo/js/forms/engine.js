@@ -1,11 +1,11 @@
-export const __v = '1.1.9-20261023-64ef56b4';
+export const __v = '1.1.10-20261023-39e8b4ad';
 // Form runtime: renders one step at a time (step rail + Back/Next), live calculations, locks after signing,
 // signature pads, photos, timesheet drag & drop, and the generic actions shared by all forms.
 // A form module supplies: STEPS, PHASE, SIGLBL, R (step renderers), CALC, issues(), flags(), act(), title.
-import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.9-20261023-64ef56b4';
-import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG } from './components.js?v=1.1.9-20261023-64ef56b4';
-import { parseNum } from './calc.js?v=1.1.9-20261023-64ef56b4';
-import { BUILD } from '../../config.js?v=1.1.9-20261023-64ef56b4';
+import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.10-20261023-39e8b4ad';
+import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG } from './components.js?v=1.1.10-20261023-39e8b4ad';
+import { parseNum } from './calc.js?v=1.1.10-20261023-39e8b4ad';
+import { BUILD } from '../../config.js?v=1.1.10-20261023-39e8b4ad';
 const APP_VERSION = String(BUILD.version || 'dev').split('-')[0];
 
 export function mountForm(root, opts) {
@@ -156,6 +156,7 @@ export function mountForm(root, opts) {
           const name = ($('#ntName').value || '').trim(), capP = parseNum($('#ntCap').value);
           if (!name) { toast('Enter the tank name.'); return false; }
           if (capP.err) { toast('Capacity: ' + capP.err); return false; }
+          if (form.tankNameTaken && form.tankNameTaken(ctxNew.ph, ctxNew.i, name)) { toast('This tank is already in this list.'); return false; }
           form.addNewTank(ctxNew.ph, ctxNew.i, name, capP.n ?? null); return true;
         },
       }).then((v) => { if (v) { markSaved(); render(false); toast('Tank added and marked as new for ops'); } });

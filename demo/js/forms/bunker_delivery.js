@@ -1,12 +1,13 @@
-export const __v = '1.1.9-20261023-64ef56b4';
+export const __v = '1.1.10-20261023-39e8b4ad';
 // Bunker Delivery Survey (form_key bunker_delivery_survey) - port of the approved mockup "as received",
 // with prefill from the job, and the submit payload in contract gbqs.forms/1.
-import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.9-20261023-64ef56b4';
-import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.9-20261023-64ef56b4';
+import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.10-20261023-39e8b4ad';
+import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.10-20261023-39e8b4ad';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker, sigGate,
-} from './components.js?v=1.1.9-20261023-64ef56b4';
+  tankKey, usedTankKeys, duplicateTanks, freeTanks,
+} from './components.js?v=1.1.10-20261023-39e8b4ad';
 
 export const key = 'bunker_delivery_survey';
 export const title = 'Bunker Delivery Survey';
@@ -240,6 +241,8 @@ export function issues() {
       else if (d.by === 'pipeline') { if (!d.pipe.meter) add('before', n + ': meter ID', 'sup'); if (num(d.pipe.b) == null) add('before', n + ': meter reading before', 'sup'); if (num(d.pipe.a) == null) add('after', n + ': meter reading after', 'sup'); }
     });
   }
+  for (const ph of ['before', 'after']) duplicateTanks(s[ph].tanks, famOf).forEach((n) => add(ph, n + ': listed twice – remove one', 'ves'));
+  allDel().forEach(({ g, d, j }) => { const seen = new Set(); (d.btanks || []).forEach((t) => { const k = String(t.name || '').trim().toLowerCase(); if (!k) return; if (seen.has(k)) add('before', `${g} ${d.bdn || 'delivery ' + (j + 1)} · barge tank ${t.name}: listed twice – remove one`, 'sup'); seen.add(k); }); });
   if (!s.before.confirm) add('before', 'Confirmation of the figures before bunkering', null, true);
   needSig('before', 'beforeMaster'); needSig('before', 'beforeSurveyor');
   if (!s.bdn.lop) add('result', 'Was a Letter of Protest issued?');
@@ -294,7 +297,7 @@ function phaseGroup(phase, g) {
     const densHtml = (phase === 'after' && t.densAuto !== false)
       ? `<div class="field"><span class="lbl">Density @ 15 °C</span><div data-calc="dens:${i}"></div><button class="btn ghost small" type="button" data-act="densManual" data-i="${i}" style="justify-self:start">Enter manually</button></div>`
       : `<div class="field" style="gap:5px">${field('Density @ 15 °C', p + '.dens', { numeric: 1, unit: 'kg/l', req: 1, kind: 'dens' })}${phase === 'after' ? `<button class="btn ghost small" type="button" data-act="densAuto" data-i="${i}" style="justify-self:start">Use BDN / mix</button>` : ''}</div>`;
-    return tankCard(phase, t, i, { VT: s.VT, family: famOf(g), densHtml, extraHtml: warnAfter });
+    return tankCard(phase, t, i, { VT: s.VT, family: famOf(g), used: usedTankKeys(s[phase].tanks, famOf, i), densHtml, extraHtml: warnAfter });
   });
   return `<section class="card" data-lockphase="${phase === 'before' ? 'before' : 'final'}">
     <div class="card-h"><h3><span class="gchip">${g}</span>${tanks.length} ${tanks.length === 1 ? 'tank' : 'tanks'}</h3><span data-calc="sub:${phase}:${g}"></span></div>
@@ -539,7 +542,9 @@ export function act(a, b) {
   switch (a) {
     case 'grade': { const g = b.dataset.g; s.grades[g].on = !s.grades[g].on; if (!s.grades[g].del.length) s.grades[g].del.push(D()); return done(); }
     case 'addTank': {
-      const ph = b.dataset.phase; s[ph].tanks.push(T(b.dataset.grade, '', 'S', ph, { open: true, corr: false })); fm.markSaved(); fm.render(false);
+      const ph = b.dataset.phase, fam = famOf(b.dataset.grade);
+      if (!freeTanks(s.VT, fam, usedTankKeys(s[ph].tanks, famOf))) toast(`All ${fam === 'do' ? 'gas oil / diesel' : 'fuel oil'} tanks of this vessel are already in this list. Use “Tank not on the list…” only for a tank that is missing.`);
+      s[ph].tanks.push(T(b.dataset.grade, '', 'S', ph, { open: true, corr: false })); fm.markSaved(); fm.render(false);
       const sel = document.querySelector(`select[data-tanksel="${ph}:${s[ph].tanks.length - 1}"]`); if (sel) sel.focus(); return true;
     }
     case 'emptyBefore': s.after.tanks[+b.dataset.i].emptyBefore = b.dataset.v === '1'; return done();
@@ -559,10 +564,11 @@ export function act(a, b) {
     case 'addSmp': s.grades[b.dataset.g].del[+b.dataset.j].extra.push({ id: nid(), type: '', seal: '', desc: '', remark: '' }); return done();
     case 'delSmp': s.grades[b.dataset.g].del[+b.dataset.j].extra.splice(+b.dataset.k, 1); return done('Sample removed');
     case 'copyTanks': {
-      const have = new Set(s.after.tanks.map((t) => t.grade + '|' + t.name)); let n = 0;
+      const have = usedTankKeys(s.after.tanks, famOf); let n = 0; // a tank is copied only once per list
       // copy completely: method, readings, TOV, temperature, density, trim/list flag; the surveyor overwrites the tanks that received bunkers
       s.before.tanks.forEach((t) => {
-        if (have.has(t.grade + '|' + t.name)) return;
+        if (!t.name || have.has(tankKey(famOf(t.grade), t.name))) return;
+        have.add(tankKey(famOf(t.grade), t.name));
         const hasDens = num(t.dens) != null;
         s.after.tanks.push(T(t.grade, t.name, t.method, 'after', { open: false, corr: !!t.corr, reading: t.reading, tov: t.tov, temp: t.temp, dens: t.dens, rem: t.rem || '', densAuto: !hasDens }));
         n++;
@@ -583,6 +589,9 @@ export function act(a, b) {
 export function beforeSet(pth, v) {
   const mm = pth.match(/^grades\.(\w+)\.del\.(\d+)\.btanks\.(\d+)\.(b|a)\.method$/);
   if (mm) { const m = S().grades[mm[1]].del[+mm[2]].btanks[+mm[3]][mm[4]]; if ((m.method === 'gauge') !== (v === 'gauge') && (m.reading || m.gauge || m.tov || m.trim || m.list)) { Object.assign(m, { reading: '', trim: '', list: '', gauge: '', tov: '' }); toast('Method changed: readings and volume cleared.'); } }
+}
+export function tankNameTaken(ph, i, name) {
+  const s = S(), t = s[ph].tanks[i]; return usedTankKeys(s[ph].tanks, famOf, i).has(tankKey(famOf(t.grade), name));
 }
 export function addNewTank(ph, i, name, cap) {
   const s = S(), t = s[ph].tanks[i], fam = famOf(t.grade);
