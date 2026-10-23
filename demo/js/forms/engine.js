@@ -4,6 +4,8 @@
 import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js';
 import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG } from './components.js';
 import { parseNum } from './calc.js';
+import { BUILD } from '../../config.js';
+const APP_VERSION = String(BUILD.version || 'dev').split('-')[0];
 
 export function mountForm(root, opts) {
   const { form, job, hooks } = opts;
@@ -24,7 +26,7 @@ export function mountForm(root, opts) {
       <div class="brand">${LOGO}<b>Global<span>BQS</span></b></div>
       <span class="net" id="net" aria-live="polite"><i></i><span id="netTxt">Online</span></span></div>
     <div class="job"><h1>${esc(form.title)}</h1><span class="ref">${esc(S.order.ref)} · ${esc(S.order.vessel)}</span></div>
-    <div class="saved"><span id="saved">${S.meta?.savedAt ? 'Saved on this device · ' + esc(S.meta.savedAt) : 'Nothing entered yet'}</span><span id="sync"></span><span>Form ${esc(form.versionLabel)}</span></div>
+    <div class="saved"><span id="saved">${S.meta?.savedAt ? 'Saved on this device · ' + esc(S.meta.savedAt) : 'Nothing entered yet'}</span><span id="sync"></span><span>Form ${esc(form.versionLabel)} · app ${esc(APP_VERSION)}</span></div>
   </div></header>
   <div id="roBanner"></div>
   <div class="layout"><nav class="steps" id="steps" aria-label="Form sections"></nav><main id="main"></main></div>
@@ -266,15 +268,15 @@ export function mountForm(root, opts) {
     if (to !== from) { moveTs(S.ts.events, from, to); markSaved(); } render(false);
   };
   const onTouchMove = (e) => { if (drag) e.preventDefault(); };
-  // iOS Safari: keep the Back/Next bar on the bottom of the VISIBLE viewport (dynamic toolbar, keyboard,
-  // split view). While the on-screen keyboard is open the bar is hidden so it never floats over the form.
+  // The Back/Next bar is plain CSS (position:fixed; bottom:0). JS only hides it while the on-screen keyboard
+  // is open, so it never floats over the form. No offsets are computed (1.1.2 shifted it up on iPad Safari).
   const foot = $('.foot', root), vv = window.visualViewport;
   const placeFoot = () => {
-    if (!foot || !vv) return;
-    const gap = Math.round(window.innerHeight - (vv.height + vv.offsetTop));
-    const kb = gap > 120 || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && document.activeElement.type !== 'checkbox' && matchMedia('(pointer:coarse)').matches && gap > 40);
-    foot.classList.toggle('kb-open', !!kb);
-    foot.style.bottom = !kb && vv.scale <= 1.01 && gap > 0 ? gap + 'px' : '0px';
+    if (!foot) return;
+    const ae = document.activeElement;
+    const typing = ae && (/^(TEXTAREA|SELECT)$/.test(ae.tagName) || (ae.tagName === 'INPUT' && !/^(checkbox|radio|button|file)$/.test(ae.type)));
+    const kb = !!(vv && typing && vv.height < window.innerHeight - 150);
+    foot.classList.toggle('kb-open', kb);
   };
   if (vv) { vv.addEventListener('resize', placeFoot); vv.addEventListener('scroll', placeFoot); }
   window.addEventListener('scroll', placeFoot, { passive: true });
