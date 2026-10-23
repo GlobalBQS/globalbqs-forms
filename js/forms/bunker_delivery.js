@@ -1,6 +1,6 @@
 // Bunker Delivery Survey (form_key bunker_delivery_survey) - port of the approved mockup "as received",
 // with prefill from the job, and the submit payload in contract gbqs.forms/1.
-import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS } from '../ui.js';
+import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js';
 import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
@@ -349,10 +349,11 @@ function supCard(ph, g, d, j) {
 }
 function bargeTankCard(ph, g, j, t, i) {
   const p = `grades.${g}.del.${j}.btanks.${i}`, k = ph === 'before' ? 'b' : 'a', m = t[k], q = `${p}.${k}`;
-  const sum = `<button class="tank-sum" type="button" data-act="btToggle" data-g="${g}" data-j="${j}" data-i="${i}" data-keep aria-expanded="${!!t.open}"><span class="tsum" data-calc="btsum:${ph}:${g}:${j}:${i}"></span>${ICON.chev}</button>`;
+  const sum = `<div class="tank-head"><button class="tank-sum" type="button" data-act="btToggle" data-g="${g}" data-j="${j}" data-i="${i}" data-keep aria-expanded="${!!t.open}"><span class="tsum" data-calc="btsum:${ph}:${g}:${j}:${i}"></span>${ICON.chev}</button>
+    <button class="icon-btn" type="button" data-act="delBT" data-g="${g}" data-j="${j}" data-i="${i}" aria-label="Remove barge tank ${esc(t.name || '')}" title="Remove barge tank">${ICON.x}</button></div>`;
   if (!t.open) return `<div class="tank">${sum}</div>`;
   return `<div class="tank open">${sum}<div class="tank-body">
-    ${ph === 'before' ? `<div class="tank-top"><div class="grow">${field('Barge tank', p + '.name', { req: 1, ph: 'e.g. Cargo tank 3S' })}</div><button class="icon-btn" type="button" data-act="delBT" data-g="${g}" data-j="${j}" data-i="${i}" aria-label="Remove barge tank">${ICON.x}</button></div>` : ''}
+    ${ph === 'before' ? `<div class="tank-top"><div class="grow">${field('Barge tank', p + '.name', { req: 1, ph: 'e.g. Cargo tank 3S' })}</div></div>` : ''}
     ${seg('Method', q + '.method', BT_METHODS, 'sm')}
     ${m.method === 'gauge' ? `<div class="grid">${field('Gauge reading', q + '.gauge', { numeric: 1, unit: 'm³', req: 1, hint: 'Volume as read from the barge gauge = TOV.' })}${field('Temperature', q + '.temp', { numeric: 1, unit: '°C', req: 1, kind: 'temp' })}</div><div class="grid two">${field('Remark', q + '.rem', { opt: 1, ph: 'e.g. radar gauge, read in the barge control room' })}</div>`
       : `<div class="grid">${field(m.method === 'ullage' ? 'Ullage' : 'Sounding', q + '.reading', { numeric: 1, unit: 'm', req: 1 })}${field('Trim correction', q + '.trim', { numeric: 1, unit: 'm', kind: 'signed', opt: 1 })}${field('List correction', q + '.list', { numeric: 1, unit: 'm', kind: 'signed', opt: 1 })}<div class="field"><span class="lbl">Corrected</span><div data-calc="bcor:${g}:${j}:${i}:${k}"></div></div></div>`}
@@ -546,7 +547,12 @@ export function act(a, b) {
     case 'gotoSup': s.ui.tab.before = 'sup'; s.ui.step = SI('before'); fm.render(true); return true;
     case 'addBT': s.grades[b.dataset.g].del[+b.dataset.j].btanks.push({ id: nid(), name: '', open: true, b: BM(), a: BM() }); return done();
     case 'btToggle': { const t = s.grades[b.dataset.g].del[+b.dataset.j].btanks[+b.dataset.i]; t.open = !t.open; fm.render(false); return true; }
-    case 'delBT': s.grades[b.dataset.g].del[+b.dataset.j].btanks.splice(+b.dataset.i, 1); return done('Barge tank removed');
+    case 'delBT': {
+      const L = s.grades[b.dataset.g].del[+b.dataset.j].btanks, t = L[+b.dataset.i]; if (!t) return true;
+      modal(`Remove barge tank ${t.name ? t.name : '(no name yet)'}?`, '<p>The barge tank and its readings (before and after bunkering) are removed.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove tank', value: 'rm', kind: 'danger' }])
+        .then((v) => { if (v) { const k = L.indexOf(t); if (k >= 0) L.splice(k, 1); done('Barge tank removed'); } });
+      return true;
+    }
     case 'addDel': s.grades[b.dataset.g].del.push(D()); return done();
     case 'delDel': s.grades[b.dataset.g].del.splice(+b.dataset.j, 1); return done('Delivery removed');
     case 'addSmp': s.grades[b.dataset.g].del[+b.dataset.j].extra.push({ id: nid(), type: '', seal: '', desc: '', remark: '' }); return done();

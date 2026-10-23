@@ -196,7 +196,13 @@ export function mountForm(root, opts) {
       if ((pth === 'bdn.lop' || pth === 'lop') && v === 'yes' && !S.lops.length) S.lops.push(newLop(nextId()));
       markSaved(); render(false); return;
     }
-    if (a === 'delTank') { const arr = getPath(`${b.dataset.phase}.tanks`); arr.splice(+b.dataset.i, 1); markSaved(); render(false); toast('Tank removed'); return; }
+    if (a === 'delTank') {
+      const arr = getPath(`${b.dataset.phase}.tanks`), t = arr && arr[+b.dataset.i]; if (!t) return;
+      const v = await modal(`Remove tank ${t.name ? t.name : '(no name yet)'}?`, '<p>The tank and its readings are removed from this list. Totals and open items are updated.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove tank', value: 'rm', kind: 'danger' }]);
+      if (!v) return;
+      const k = arr.indexOf(t); if (k >= 0) arr.splice(k, 1);
+      markSaved(); render(false); toast('Tank removed'); return;
+    }
     if (a === 'addLop') { S.lops.push(newLop(nextId())); markSaved(); render(false); return; }
     if (a === 'delLop') { const l = S.lops.splice(+b.dataset.i, 1)[0]; if (l) { (S.photos['lop_' + l.id] || []).forEach((p) => hooks.removePhoto(p)); delete S.photos['lop_' + l.id]; } markSaved(); render(false); toast('Letter of Protest removed'); return; }
     if (['tsUp', 'tsDown', 'tsDel', 'sortTs', 'addEv'].includes(a) && form.PHASE.ts && signed('ts')) { toast('The timesheet is signed. Unlock it first.'); return; }

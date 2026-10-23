@@ -158,7 +158,8 @@ export function tankOptions(t, VT, family, famLabel = { fo: 'Fuel oil tanks', do
  */
 export function tankCard(phase, t, i, o) {
   const p = `${phase}.tanks.${i}`;
-  const sum = `<button class="tank-sum" type="button" data-act="tankToggle" data-phase="${phase}" data-i="${i}" data-keep aria-expanded="${!!t.open}"><span class="tsum" data-calc="tsum:${phase}:${i}"></span>${ICON.chev}</button>`;
+  const sum = `<div class="tank-head"><button class="tank-sum" type="button" data-act="tankToggle" data-phase="${phase}" data-i="${i}" data-keep aria-expanded="${!!t.open}"><span class="tsum" data-calc="tsum:${phase}:${i}"></span>${ICON.chev}</button>
+    <button class="icon-btn" type="button" data-act="delTank" data-phase="${phase}" data-i="${i}" aria-label="Remove tank ${esc(t.name || '')}" title="Remove tank">${ICON.x}</button></div>`;
   if (!t.open) return `<div class="tank" data-tank="${phase}:${i}">${sum}</div>`;
   const vt = o.VT.find((x) => x.name === t.name && x.fam === o.family);
   return `<div class="tank open" data-tank="${phase}:${i}">${sum}<div class="tank-body">
@@ -167,7 +168,6 @@ export function tankCard(phase, t, i, o) {
         ${vt && vt.isNew ? '<p class="hint"><span class="pill info">New</span> Added on board; ops will check it and add it to the vessel tank list.</p>' : ''}</div>
       <div class="field"><span class="lbl">Method</span><div class="seg sm" role="group" aria-label="Sounding, ullage or gauge">
         ${METHODS.map(([v, l]) => `<button type="button" data-act="set" data-path="${p}.method" data-val="${v}" aria-pressed="${t.method === v}">${l}</button>`).join('')}</div></div>
-      <button class="icon-btn" type="button" data-act="delTank" data-phase="${phase}" data-i="${i}" aria-label="Remove ${esc(t.name || 'tank')}">${ICON.x}</button>
     </div>
     ${o.extraHtml || ''}
     <div class="grid">

@@ -370,3 +370,6 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
 @media (min-width:1000px){ .steps .sep{padding:10px 4px 2px; align-self:flex-start} }
 
 .foot.kb-open{visibility:hidden}
+
+.tank-head{display:flex; align-items:center; gap:4px; padding-right:8px}
+.tank-head .tank-sum{flex:1; min-width:0}
