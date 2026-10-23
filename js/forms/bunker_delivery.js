@@ -447,10 +447,10 @@ R.submit = () => `
   <section class="card"><div class="card-h"><h3>Photos</h3></div>
     ${photoBlock('bdn', 'Signed BDN(s)', true)}${photoBlock('seals', 'Sample labels and seals')}${photoBlock('other', 'Other (meter readings, barge, tanks)')}
     <p class="hint">Photos are reduced on this device before upload, so they also send over a slow ship connection.</p></section>
-  <section class="card"><div class="card-h"><h3>Before you submit</h3><span data-calc="opencount"></span></div><div data-calc="review"></div></section>
   <section class="card"><div class="card-h"><h3>Recorded for GlobalBQS ops</h3></div><div data-calc="flags"></div></section>
   <section class="card">
-    ${confirmBox('final', 'I am the appointed surveyor. I have reviewed this report and signed it. GlobalBQS ops checks it and issues it to the client.')}
+    ${confirmBox('final', 'I am the appointed surveyor. I have reviewed this report and signed it. GlobalBQS ops checks it and issues it to the client.')}</section>
+  <section class="card" id="submitCard"><div class="card-h"><h3>Before you submit</h3><span data-calc="opencount"></span></div><div data-calc="review"></div>
     <p class="hint">After Submit the status is: Submitted → Under review by GlobalBQS → Report issued. Figures are recalculated by GlobalBQS on submission.</p>
     <button class="btn primary" type="button" data-act="submit" id="submitBtn">Submit survey</button></section>`;
 

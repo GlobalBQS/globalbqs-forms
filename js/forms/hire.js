@@ -310,10 +310,10 @@ export function create(key) {
   const photosCard = (hint) => `<section class="card"><div class="card-h"><h3>Photos</h3></div>
     ${photoBlock('log', 'Engine log / ROB page')}${photoBlock('tanks', 'Sounding tapes, gauges and tank tables')}${photoBlock('other', 'Other')}
     <p class="hint">${hint}</p></section>`;
-  const reviewCard = () => `<section class="card"><div class="card-h"><h3>Before you sign</h3><span data-calc="opencount"></span></div><div data-calc="review"></div>
-    <div class="card-h"><h3>Recorded for GlobalBQS ops</h3></div><div data-calc="flags"></div>
+  const reviewCard = () => `<section class="card"><div class="card-h"><h3>Recorded for GlobalBQS ops</h3></div><div data-calc="flags"></div>
     ${confirmBox('final', 'I am the appointed surveyor. I have reviewed this report. GlobalBQS ops checks it and issues it to the client.')}</section>`;
-  const submitCard = () => `<section class="card"><p class="hint">After Submit the status is: Submitted → Under review by GlobalBQS → Report issued.${V.bunker ? ' Figures are recalculated by GlobalBQS on submission.' : ''}</p>
+  const submitCard = () => `<section class="card" id="submitCard"><div class="card-h"><h3>Before you submit</h3><span data-calc="opencount"></span></div><div data-calc="review"></div>
+    <p class="hint">After Submit the status is: Submitted → Under review by GlobalBQS → Report issued.${V.bunker ? ' Figures are recalculated by GlobalBQS on submission.' : ''}</p>
     <button class="btn primary" type="button" data-act="submit" id="submitBtn">Submit survey</button></section>`;
   const bunkerSign = (title, text) => { const sv = S().survey; return `<section class="card"><div class="card-h"><h3>${title}</h3></div>
     ${sigGate('bunker')}

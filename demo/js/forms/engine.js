@@ -34,6 +34,7 @@ export function mountForm(root, opts) {
     <button class="btn ghost" type="button" data-act="prev" id="prevBtn" data-keep>Back</button>
     <div class="where" id="where"></div>
     <button class="btn primary" type="button" data-act="next" id="nextBtn" data-keep>Next</button>
+    <button class="btn primary" type="button" data-act="submit" id="barSubmit" hidden>Submit</button>
   </div></div>`;
 
   const main = $('#main', root);
@@ -72,6 +73,8 @@ export function mountForm(root, opts) {
     $('#where', root).innerHTML = `Step <b>${step + 1}</b> of ${STEPS.length} · ${STEPS[step].t}`;
     const pb = $('#prevBtn', root); pb.disabled = step === 0; pb.style.visibility = step === 0 ? 'hidden' : 'visible';
     $('#nextBtn', root).hidden = step === last;
+    // last step: Submit in the bar (keeps the bar balanced); enabled once nothing is open
+    const bs = $('#barSubmit', root); bs.hidden = step !== last; bs.disabled = ctx.readOnly || L.length > 0 || !!S.meta?.submitted;
   }
   function applyLocks() {
     $$('[data-lockphase]', main).forEach((c) => {
