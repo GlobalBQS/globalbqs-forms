@@ -1,7 +1,8 @@
+export const __v = '1.1.9-20261023-64ef56b4';
 // Sync engine: draft push (debounced, with rev), file uploads (register -> PUT -> confirm) and the outbox
 // (files first, then submit; idempotent client ids; retry with backoff). Emits events on `bus`.
-import * as db from './db.js';
-import { call, putFile, ApiError } from './api.js';
+import * as db from './db.js?v=1.1.9-20261023-64ef56b4';
+import { call, putFile, ApiError } from './api.js?v=1.1.9-20261023-64ef56b4';
 
 export const bus = new EventTarget();
 const emit = (type, detail) => bus.dispatchEvent(new CustomEvent(type, { detail }));
@@ -154,7 +155,9 @@ export function pushDraft(jobId, { force = false, allowShrink = false } = {}) {
         // the server has a fuller version (e.g. a job reopened with the previous entries): take it, keep ours as backup
         if (server && server.payload && server.payload.state) {
           const cur = await db.get('jobs', jobId);
-          if (await adoptServerDraft(cur, { rev: server.rev, saved_at: server.saved_at, payload: server.payload })) { await db.put('jobs', cur); return { adopted: true }; }
+          const adopted = await adoptServerDraft(cur, { rev: server.rev, saved_at: server.saved_at, payload: server.payload });
+          await db.put('jobs', cur); // adopted, or pending_stale kept so the question is asked when the form opens
+          if (adopted) return { adopted: true };
         }
         emit('stale', { jobId, serverRev: e.data.server_rev, server });
         return { stale: true };
@@ -167,8 +170,27 @@ export function pushDraft(jobId, { force = false, allowShrink = false } = {}) {
   });
 }
 
+/** Load the version saved on GlobalBQS on this device, whatever is here (the local copy is kept as a backup).
+ *  Used by the "Load saved version from GlobalBQS" button. */
+export async function forceServerDraft(jobId) {
+  return exclusive('draft:' + jobId, async () => {
+    const job = await db.get('jobs', jobId);
+    if (!job || !job.session) throw new ApiError('invalid_session', 0);
+    const r = await call('/draft', { session: job.session });
+    if (!r || !r.payload || !r.payload.state) return { none: true };
+    const local = await db.get('drafts', jobId);
+    if (local && local.state) { try { await db.kvSet('draft_backup:' + jobId, { saved_at: new Date().toISOString(), server_rev: job.server_rev || 0, local, reason: 'manual' }); } catch { /* */ } }
+    const lr = (local?.local_rev || 0) + 1;
+    await db.put('drafts', { job_id: jobId, state: r.payload.state, local_rev: lr, saved_at: r.saved_at || new Date().toISOString() });
+    await db.update('jobs', jobId, (j) => ({ ...j, server_rev: r.rev, pushed_local_rev: lr, pending_stale: null, foreign_draft: false, synced_at: new Date().toISOString() }));
+    emit('adopted', { jobId, rev: r.rev });
+    return { loaded: true, rev: r.rev };
+  });
+}
+
 /** Stale resolution: "keep mine" -> overwrite server (build on server rev); "use server" -> replace local state. */
 export async function resolveStale(jobId, choice, server) {
+  await db.update('jobs', jobId, (j) => (j ? { ...j, pending_stale: null } : j));
   if (choice === 'mine') {
     await db.update('jobs', jobId, (j) => ({ ...j, server_rev: server?.rev ?? j.server_rev }));
     return pushDraft(jobId, { force: true, allowShrink: true });

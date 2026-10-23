@@ -5,7 +5,7 @@
  * - the new version waits until the user taps "Reload" (message skipWaiting);
  * - API calls (supabase.co) and uploads are never cached or intercepted.
  */
-const VERSION = '1.1.8-20261023-4f2cfa3c-prod';
+const VERSION = '1.1.9-20261023-64ef56b4-prod';
 const ASSETS = ["./","app.css","assets/fonts/ibm-plex-mono-latin-400-normal.woff2","assets/fonts/ibm-plex-mono-latin-500-normal.woff2","assets/fonts/ibm-plex-mono-latin-600-normal.woff2","assets/fonts/ibm-plex-sans-latin-400-normal.woff2","assets/fonts/ibm-plex-sans-latin-500-normal.woff2","assets/fonts/ibm-plex-sans-latin-600-normal.woff2","assets/fonts/ibm-plex-sans-latin-700-normal.woff2","assets/icons/apple-touch-icon.png","assets/icons/favicon-32.png","assets/icons/globalbqs-icon-dark.svg","assets/icons/icon-192.png","assets/icons/icon-512.png","assets/icons/icon.svg","assets/icons/maskable-192.png","assets/icons/maskable-512.png","config.js","index.html","js/api.js","js/app.js","js/db.js","js/forms/bunker_delivery.js","js/forms/calc.js","js/forms/components.js","js/forms/engine.js","js/forms/hire.js","js/forms/registry.js","js/photos.js","js/sync.js","js/ui.js","manifest.webmanifest"];
 const CACHE = 'gbqs-forms-' + VERSION;
 const SCOPE = new URL(self.registration.scope);
@@ -13,9 +13,10 @@ const SCOPE = new URL(self.registration.scope);
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // fetch fresh copies (bypass the HTTP cache) so a release never mixes old and new files
+    // fetch fresh copies (bypass the HTTP and CDN cache) so a release never mixes old and new files
     await Promise.all(ASSETS.map(async (a) => {
-      const res = await fetch(new Request(a, { cache: 'reload' }));
+      // ?v= gives every release its own URL, so no CDN copy of an older release can end up in this cache
+      const res = await fetch(new Request((a === './' ? './' : a) + '?v=' + encodeURIComponent(VERSION), { cache: 'reload' }));
       if (!res.ok) throw new Error('precache failed: ' + a);
       await cache.put(a === './' ? new URL('./', SCOPE).href : a, res);
     }));

@@ -1,14 +1,15 @@
+export const __v = '1.1.9-20261023-64ef56b4';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js';
-import * as db from './db.js';
-import { call, ApiError, textFor } from './api.js';
-import * as sync from './sync.js';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js';
-import { loadForm, isSupported } from './forms/registry.js';
-import { mountForm } from './forms/engine.js';
-import { imoOk } from './forms/calc.js';
+import { ENV } from '../config.js?v=1.1.9-20261023-64ef56b4';
+import * as db from './db.js?v=1.1.9-20261023-64ef56b4';
+import { call, ApiError, textFor } from './api.js?v=1.1.9-20261023-64ef56b4';
+import * as sync from './sync.js?v=1.1.9-20261023-64ef56b4';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.9-20261023-64ef56b4';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.9-20261023-64ef56b4';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.9-20261023-64ef56b4';
+import { mountForm } from './forms/engine.js?v=1.1.9-20261023-64ef56b4';
+import { imoOk } from './forms/calc.js?v=1.1.9-20261023-64ef56b4';
 
 const app = $('#app');
 let cleanup = null;
@@ -308,8 +309,23 @@ V.job = async (id) => {
     ${!job.prefill ? note('warn', 'This job is not ready offline yet. Open it once with signal.') : ''}
     ${['queued', 'submitted'].includes(job.status) ? '<button class="btn primary block" type="button" data-go="#/job/' + id + '/status">Show status</button>'
       : supported && job.prefill ? `<button class="btn primary block" type="button" data-go="#/job/${id}/${started ? 'form' : 'check'}">${job.read_only ? 'View survey (read-only)' : started ? 'Continue survey' : 'I am on board: start'}</button>` : ''}
+    ${!job.read_only && job.session && !['queued', 'submitted'].includes(job.status) && supported ? `<button class="btn ghost block" type="button" id="loadServer">Load saved version from GlobalBQS</button><p class="muted small" style="margin:0;text-align:center">Replaces the copy on this device with the version last saved on GlobalBQS (this device's copy is kept as a backup).</p>` : ''}
     ${job.status === 'submitted' || job.read_only_reason === 'cancelled' ? '<button class="btn ghost block" type="button" id="removeJob">Remove from this device</button>' : ''}
   </div>`);
+  const ls = $('#loadServer');
+  if (ls) ls.onclick = async () => {
+    if (!navigator.onLine) { toast('This needs signal.'); return; }
+    const v = await modal('Load the saved version?', '<p>The form on this device is replaced by the version last saved on GlobalBQS. The copy on this device is kept as a backup.</p>', [{ label: 'Cancel', value: null }, { label: 'Load saved version', value: 'go', kind: 'primary' }]);
+    if (!v) return;
+    ls.disabled = true;
+    try {
+      const r = await sync.forceServerDraft(id);
+      if (r.none) { toast('No saved version on GlobalBQS yet.'); ls.disabled = false; return; }
+      toast('Saved version loaded.');
+      const d = await db.get('drafts', id);
+      location.hash = '#/job/' + id + (d && d.state && d.state.gate && d.state.gate.done ? '/form' : '/check');
+    } catch (e) { toast(textFor(e.code)); ls.disabled = false; }
+  };
   const rm = $('#removeJob');
   if (rm) rm.onclick = async () => {
     const v = await modal('Remove this job from this device?', '<p>The survey stays with GlobalBQS. Only the copy on this device is removed.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove', value: 'rm', kind: 'danger' }]);
@@ -645,8 +661,27 @@ function registerSW() {
   }).catch(() => { /* no SW (e.g. http) */ });
 }
 
+// ---------- release check ----------
+// All modules carry the release version (build). Should the app cache ever hold modules of two releases (e.g. a
+// CDN served an old file during an update), drop the app cache and reload once. Drafts (IndexedDB) are untouched.
+const MODULES = ['./db.js', './api.js', './sync.js', './ui.js', './photos.js', './forms/registry.js', './forms/engine.js', './forms/calc.js', './forms/components.js', './forms/hire.js', './forms/bunker_delivery.js'];
+async function releaseOk() {
+  if (!/^\d+\.\d+\.\d+-/.test(ENV.version)) return true; // dev build
+  const self = typeof __v !== 'undefined' ? __v : null; // eslint-disable-line no-undef
+  const vs = [self, ...(await Promise.all(MODULES.map((m) => import(m + '?v=' + ENV.version).then((x) => x.__v).catch(() => 'missing'))))];
+  if (vs.every((v) => v === ENV.version)) { try { sessionStorage.removeItem('gbqs_repair'); } catch { /* */ } return true; }
+  let tried = false;
+  try { tried = sessionStorage.getItem('gbqs_repair') === ENV.version; sessionStorage.setItem('gbqs_repair', ENV.version); } catch { /* */ }
+  if (tried) return true;
+  try { for (const k of await caches.keys()) if (k.startsWith('gbqs-forms-')) await caches.delete(k); } catch { /* */ }
+  try { for (const r of (await navigator.serviceWorker.getRegistrations())) await r.unregister(); } catch { /* */ }
+  location.reload();
+  return false;
+}
+
 // ---------- boot ----------
 async function boot() {
+  if (!(await releaseOk())) return;
   // /j/<token> path (static host 404 fallback / SW) -> hash route
   const pm = /\/j\/([0-9a-fA-F]{64})\/?$/.exec(location.pathname);
   if (pm) { location.replace(location.pathname.replace(/j\/[0-9a-fA-F]{64}\/?$/, '') + '#/j/' + pm[1].toLowerCase()); return; }
