@@ -1,10 +1,10 @@
-export const __v = '1.1.10-20261023-39e8b4ad';
+export const __v = '1.1.11-20261023-3d362bf4';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate } from '../ui.js?v=1.1.10-20261023-39e8b4ad';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.10-20261023-39e8b4ad';
+import { esc, ICON, note, nowIn, fmtDate } from '../ui.js?v=1.1.11-20261023-3d362bf4';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.11-20261023-3d362bf4';
 
 export const ctx = {
   S: null,          // form state (the draft)
@@ -55,9 +55,10 @@ export function area(label, path, o = {}) {
   const id = idOf(path);
   return `<div class="field"><label for="${id}">${label}${o.opt ? ' <span class="opt">(optional)</span>' : ''}</label><textarea id="${id}" data-bind="${path}" placeholder="${esc(o.ph || '')}">${esc(getPath(path) ?? '')}</textarea></div>`;
 }
+/** o.taken: values already used in this list (other rows): shown disabled */
 export function selectField(label, path, opts, o = {}) {
   const v = getPath(path) ?? '', id = idOf(path);
-  return `<div class="field"><label for="${id}">${label}</label><div class="ctl"><select id="${id}" data-bind="${path}" ${o.req ? 'data-req="1"' : ''} class="${o.req && !v ? 'miss' : ''}"><option value="">${o.placeholder || 'Choose…'}</option>${opts.map(([val, txt]) => `<option value="${esc(val)}" ${v === val ? 'selected' : ''}>${esc(txt)}</option>`).join('')}</select></div>${o.hint ? `<p class="hint">${o.hint}</p>` : ''}</div>`;
+  return `<div class="field"><label for="${id}">${label}</label><div class="ctl"><select id="${id}" data-bind="${path}" ${o.req ? 'data-req="1"' : ''} class="${o.req && !v ? 'miss' : ''}"><option value="">${o.placeholder || 'Choose…'}</option>${opts.map(([val, txt]) => { const taken = o.taken && v !== val && o.taken.has(val); return `<option value="${esc(val)}" ${v === val ? 'selected' : ''} ${taken ? 'disabled' : ''}>${esc(txt)}${taken ? ' · already in this list' : ''}</option>`; }).join('')}</select></div>${o.hint ? `<p class="hint">${o.hint}</p>` : ''}</div>`;
 }
 export function seg(label, path, opts, cls = '') {
   const v = getPath(path);

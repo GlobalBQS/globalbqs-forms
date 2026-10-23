@@ -1,13 +1,13 @@
-export const __v = '1.1.10-20261023-39e8b4ad';
+export const __v = '1.1.11-20261023-3d362bf4';
 // Bunker Delivery Survey (form_key bunker_delivery_survey) - port of the approved mockup "as received",
 // with prefill from the job, and the submit payload in contract gbqs.forms/1.
-import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.10-20261023-39e8b4ad';
-import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.10-20261023-39e8b4ad';
+import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.11-20261023-3d362bf4';
+import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.11-20261023-3d362bf4';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker, sigGate,
   tankKey, usedTankKeys, duplicateTanks, freeTanks,
-} from './components.js?v=1.1.10-20261023-39e8b4ad';
+} from './components.js?v=1.1.11-20261023-3d362bf4';
 
 export const key = 'bunker_delivery_survey';
 export const title = 'Bunker Delivery Survey';
@@ -241,6 +241,11 @@ export function issues() {
       else if (d.by === 'pipeline') { if (!d.pipe.meter) add('before', n + ': meter ID', 'sup'); if (num(d.pipe.b) == null) add('before', n + ': meter reading before', 'sup'); if (num(d.pipe.a) == null) add('after', n + ': meter reading after', 'sup'); }
     });
   }
+  // seal numbers are unique on the whole survey; a BDN number once per grade
+  { const seen = new Map();
+    allDel().forEach(({ g, d, j }) => { const n = `${g} ${d.bdn || 'delivery ' + (j + 1)}`;
+      [...['marpol', 'ship', 'supplier'].map((k) => d.seals[k]), ...d.extra.map((r) => r.seal)].forEach((x) => { const k = String(x || '').trim().toLowerCase(); if (!k) return; if (seen.has(k)) add('bdn', `Seal no. ${String(x).trim()}: used twice (${seen.get(k)}${seen.get(k) === n ? '' : ' and ' + n}) – correct one`); else seen.set(k, n); }); });
+    for (const g of active()) { const b = new Set(); s.grades[g].del.forEach((d) => { const k = String(d.bdn || '').trim().toLowerCase(); if (!k) return; if (b.has(k)) add('bdn', `${g}: BDN ${String(d.bdn).trim()} listed twice – remove one`); b.add(k); }); } }
   for (const ph of ['before', 'after']) duplicateTanks(s[ph].tanks, famOf).forEach((n) => add(ph, n + ': listed twice – remove one', 'ves'));
   allDel().forEach(({ g, d, j }) => { const seen = new Set(); (d.btanks || []).forEach((t) => { const k = String(t.name || '').trim().toLowerCase(); if (!k) return; if (seen.has(k)) add('before', `${g} ${d.bdn || 'delivery ' + (j + 1)} · barge tank ${t.name}: listed twice – remove one`, 'sup'); seen.add(k); }); });
   if (!s.before.confirm) add('before', 'Confirmation of the figures before bunkering', null, true);

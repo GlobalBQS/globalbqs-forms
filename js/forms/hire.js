@@ -1,16 +1,16 @@
-export const __v = '1.1.10-20261023-39e8b4ad';
+export const __v = '1.1.11-20261023-3d362bf4';
 // B221 (Bunker Quantity Survey), On-/Off-Hire Bunker, On-/Off-Hire B+C and On-/Off-Hire Condition.
 // One factory, four approved mockups ("as received"): the B+C mockup is the union of the bunker part
 // (vessel, fuel types & logbook, tank soundings, result) and the condition part (hull & main deck,
 // deck fittings & safety, cargo holds, engine room, damages & conclusion). Shared components from
 // components.js (tank rows, signatures with the "sign only when complete" rule, photos, LOP, review).
-import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.10-20261023-39e8b4ad';
-import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.10-20261023-39e8b4ad';
+import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.11-20261023-3d362bf4';
+import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.11-20261023-3d362bf4';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, reviewList, flagList, hasSig, portNow, portOffset, offsetPicker, sigGate, gateCorrectionsFrom,
   tankKey, usedTankKeys, duplicateTanks, freeTanks,
-} from './components.js?v=1.1.10-20261023-39e8b4ad';
+} from './components.js?v=1.1.11-20261023-3d362bf4';
 
 const BASE_GRADES = ['VLSFO', 'HSFO', 'LSMGO', 'MDO'];
 const DO_GRADES = ['LSMGO', 'MGO', 'MDO', 'DMA', 'DMB', 'DMZ', 'ULSMGO'];
@@ -201,9 +201,11 @@ export function create(key) {
       if (!C.holds.length) add('holds', 'Add at least one hold');
       C.holds.forEach((h, i) => {
         if (!h.hold) add('holds', `Hold ${i + 1}: hold number`);
+
         const open = HOLD_ITEMS().filter(([k]) => !(h.items[k] || {}).st).length; if (open) add('holds', `Hold ${h.hold || i + 1}: rate ${open} item${open > 1 ? 's' : ''}`);
         HOLD_ITEMS().forEach(([k]) => { const it = h.items[k] || {}; if (it.st === 'damaged' && !String(it.rem || '').trim()) add('holds', holdLbl(h, k) + ': remark'); });
       });
+      [...new Set(C.holds.map((h) => h.hold).filter((x, k, A) => x && A.indexOf(x) !== k))].forEach((x) => add('holds', `Hold ${x}: listed twice – remove one`));
       C.damages.forEach((d, i) => {
         const n = 'Damage ' + (i + 1);
         if (!d.area) add('concl', n + ': area'); if (!String(d.loc || '').trim()) add('concl', n + ': exact location'); if (!String(d.desc || '').trim()) add('concl', n + ': description');
@@ -280,7 +282,7 @@ export function create(key) {
     const sum = `<button class="tank-sum" type="button" data-act="holdToggle" data-i="${i}" data-keep aria-expanded="${!!h.open}"><span class="tsum" data-calc="hsum:${i}"></span>${ICON.chev}</button>`;
     if (!h.open) return `<div class="tank">${sum}</div>`;
     return `<div class="tank open">${sum}<div class="tank-body">
-      <div class="tank-top"><div class="grow">${selectField('Hold no.', p + '.hold', Array.from({ length: 9 }, (_, k) => [String(k + 1), 'Hold ' + (k + 1)]), { req: 1 })}</div>
+      <div class="tank-top"><div class="grow">${selectField('Hold no.', p + '.hold', Array.from({ length: 9 }, (_, k) => [String(k + 1), 'Hold ' + (k + 1)]), { req: 1, taken: new Set(S().cond.holds.filter((x, k) => k !== i && x.hold).map((x) => x.hold)) })}</div>
         ${i > 0 ? `<button class="btn ghost small" type="button" data-act="copyHold" data-i="${i}">Copy ratings from previous hold</button>` : ''}
         <button class="icon-btn" type="button" data-act="delHold" data-i="${i}" aria-label="Remove hold ${esc(h.hold || i + 1)}">${ICON.x}</button></div>
       <div class="clist">${HOLD_ITEMS().map(([k, n]) => {
@@ -479,8 +481,9 @@ export function create(key) {
       }
       case 'addHold': {
         const H = C.holds, used = new Set(H.map((h) => h.hold)); let n = 1; while (used.has(String(n)) && n < 9) n++;
-        H.forEach((h) => { h.open = false; }); H.push(newHold(used.has(String(n)) ? '' : String(n)));
-        return done(`Hold ${n} added with ${HOLD_ITEMS().length} items`);
+        const full = used.has(String(n));
+        H.forEach((h) => { h.open = false; }); H.push(newHold(full ? '' : String(n)));
+        return done(full ? 'Holds 1 to 9 are all in the list already. Check the hold numbers.' : `Hold ${n} added with ${HOLD_ITEMS().length} items`);
       }
       case 'holdToggle': { const h = C.holds[+b.dataset.i]; h.open = !h.open; fm.render(false); return true; }
       case 'copyHold': {
