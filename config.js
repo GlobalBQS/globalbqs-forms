@@ -1,6 +1,6 @@
 // GlobalBQS Forms - environment configuration.
 // BUILD is replaced by tools/build.mjs (flavor "prod" or "demo", version string). In src/ it stays "dev".
-export const BUILD = { flavor: 'prod', version: '1.1.5-20261023-559c1668' };
+export const BUILD = { flavor: 'prod', version: '1.1.6-20261023-aec812aa' };
 
 const PROJECTS = {
   prod: 'rubeyjumsounqyqikoyg',

@@ -3,6 +3,7 @@
 import { ENV } from '../config.js';
 
 export const TEXT = {
+  files_pending: 'Waiting for photos/signatures to upload (see the list below).',
   offline: 'No connection. Your work is saved on this device and will be sent when you are back in range.',
   invalid_link: 'This link is not valid (any more). Ask GlobalBQS operations for a new link.',
   cancelled: 'This job was cancelled by GlobalBQS. Nothing more to do here.',
@@ -41,7 +42,7 @@ export class ApiError extends Error {
     super(textFor(code));
     this.code = code; this.status = status; this.data = data || {};
   }
-  get retryable() { return ['offline', 'server_error', 'http_error', 'rate_limited', 'processing_error'].includes(this.code); }
+  get retryable() { return ['offline', 'files_pending', 'server_error', 'http_error', 'rate_limited', 'processing_error'].includes(this.code); }
 }
 
 /**

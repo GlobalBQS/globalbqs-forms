@@ -109,28 +109,51 @@ export async function addFile(rec) {
   return r;
 }
 
-async function uploadOne(job, f) {
-  const reg = await call('/file', {
-    method: 'POST', session: job.session,
-    body: { client_file_id: f.id, kind: f.kind, section: f.section || null, mime: f.mime, size_bytes: f.size, taken_at: f.taken_at || null },
-  });
-  if (!reg.already_uploaded) {
-    if (!f.blob) throw new ApiError('not_found', 404);
-    await db.put('files', { ...f, status: 'uploading', storage_path: reg.storage_path });
-    emit('files', { jobId: job.job_id });
-    await putFile(reg.upload.url, f.blob, reg.upload.content_type || f.mime);
+// iOS Safari/WebKit can return Blobs from IndexedDB that can no longer be read ("WebKitBlobResource error",
+// fetch fails with "Load failed" before the request is sent). Since 1.1.6 files are stored as ArrayBuffer
+// bytes; old records with a Blob are read first, and a signature that cannot be read is re-drawn from the
+// strokes in the draft (regenerator hook set by the app).
+let regenerate = null;
+export function setRegenerator(fn) { regenerate = fn; }
+class FileUnreadable extends Error {}
+async function readBytes(f) {
+  if (f.bytes && f.bytes.byteLength) return f.bytes;
+  if (f.blob) {
+    try { const b = await f.blob.arrayBuffer(); if (b && b.byteLength) return b; } catch { /* unreadable blob */ }
   }
-  try {
-    await call('/file/confirm', { method: 'POST', session: job.session, body: { client_file_id: f.id } });
-  } catch (e) {
-    if (!(e instanceof ApiError && e.code === 'not_found' && reg.already_uploaded === false)) throw e;
+  throw new FileUnreadable(f.id);
+}
+async function bytesFor(f) {
+  try { return await readBytes(f); } catch (e) {
+    if (!(e instanceof FileUnreadable)) throw e;
+    if (regenerate) {
+      const b = await regenerate(f);
+      if (b && b.byteLength) { await db.put('files', { ...f, bytes: b, blob: null, size: b.byteLength, regenerated: true }); return b; }
+    }
     throw e;
   }
-  await db.put('files', { ...f, status: 'uploaded', storage_path: reg.storage_path, uploaded_at: new Date().toISOString(), error: null });
+}
+
+async function uploadOne(job, f) {
+  const bytes = await bytesFor(f); // read before registering: an unreadable file is detected here, not as a network error
+  const reg = await call('/file', {
+    method: 'POST', session: job.session,
+    body: { client_file_id: f.id, kind: f.kind, section: f.section || null, mime: f.mime, size_bytes: bytes.byteLength, taken_at: f.taken_at || null },
+  });
+  if (!reg.already_uploaded) {
+    await db.put('files', { ...(await db.get('files', f.id)), status: 'uploading', storage_path: reg.storage_path });
+    emit('files', { jobId: job.job_id });
+    const type = reg.upload.content_type || f.mime;
+    await putFile(reg.upload.url, new Blob([bytes], { type }), type);
+  }
+  await call('/file/confirm', { method: 'POST', session: job.session, body: { client_file_id: f.id } });
+  const cur = await db.get('files', f.id);
+  await db.put('files', { ...cur, status: 'uploaded', storage_path: reg.storage_path, uploaded_at: new Date().toISOString(), error: null, error_text: null });
   emit('files', { jobId: job.job_id });
 }
 
-/** Upload pending files of a job (optionally only the given ids). Resolves true when all of them are uploaded. */
+/** Upload pending files of a job (optionally only the given ids). Resolves true when all of them are uploaded
+ *  (or permanently lost: unreadable photos do not block the submission; the server keeps a placeholder). */
 export function uploadFiles(jobId, onlyIds = null) {
   return exclusive('files:' + jobId, async () => {
     const job = await db.get('jobs', jobId);
@@ -138,17 +161,26 @@ export function uploadFiles(jobId, onlyIds = null) {
     const files = (await db.byIndex('files', 'job_id', jobId)).filter((f) => !onlyIds || onlyIds.includes(f.id));
     let allDone = true;
     for (const f of files) {
-      if (f.status === 'uploaded') continue;
+      if (f.status === 'uploaded' || f.status === 'lost') continue;
       if (f.removed && !(onlyIds && onlyIds.includes(f.id))) continue;
       if (!online()) { allDone = false; break; }
       if (f.next_at && Date.now() < f.next_at && !onlyIds) { allDone = false; continue; }
       try { await uploadOne(job, f); } catch (e) {
-        allDone = false;
         if (await handleAuthError(jobId, e)) return false;
-        const attempts = (f.attempts || 0) + 1;
-        await db.put('files', { ...f, status: 'error', attempts, error: e.code || 'error', next_at: Date.now() + nextDelay(attempts - 1) });
+        const cur = (await db.get('files', f.id)) || f;
+        if (e instanceof FileUnreadable) {
+          // a photo that this device can no longer read: do not block the survey; ops sees a placeholder
+          await db.put('files', { ...cur, status: 'lost', error: 'unreadable', error_text: 'This file could not be read on this device and was not sent.' });
+          emit('files', { jobId });
+          continue;
+        }
+        allDone = false;
+        const attempts = (cur.attempts || 0) + 1;
+        const code = e instanceof ApiError ? e.code : 'error';
+        const text = code === 'offline' ? (online() ? 'Upload failed (connection or storage error).' : 'No connection.') : (e.message || code);
+        await db.put('files', { ...cur, status: 'error', attempts, error: code, error_text: text, next_at: Date.now() + nextDelay(attempts - 1) });
         emit('files', { jobId });
-        if (e.code === 'offline') break;
+        if (!online()) break; // really offline: stop; otherwise try the other files too
       }
     }
     return allDone;
@@ -178,7 +210,7 @@ export function processOutbox(jobId, { force = false } = {}) {
     await db.put('outbox', { ...ob, status: 'sending' }); emit('outbox', { jobId });
     try {
       const filesOk = await uploadFiles(jobId, ob.file_ids || []);
-      if (!filesOk) throw new ApiError('offline', 0, { stage: 'files' });
+      if (!filesOk) throw new ApiError(online() ? 'files_pending' : 'offline', 0, { stage: 'files' });
       const r = await call('/submit', { method: 'POST', session: job.session, body: { client_submission_id: ob.client_submission_id, payload: ob.payload } });
       const done = { ...ob, status: 'sent', result: r, sent_at: new Date().toISOString(), last_error: null };
       await db.put('outbox', done);

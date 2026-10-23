@@ -405,7 +405,9 @@ V.check = async (id) => {
 const thumbs = new Map();
 async function loadThumbs(jobId) {
   for (const f of await db.byIndex('files', 'job_id', jobId)) {
-    if (f.blob && f.kind !== 'signature' && !thumbs.has(f.id)) thumbs.set(f.id, URL.createObjectURL(f.blob));
+    if (f.kind === 'signature' || thumbs.has(f.id)) continue;
+    if (f.bytes) thumbs.set(f.id, URL.createObjectURL(new Blob([f.bytes], { type: f.mime || 'image/jpeg' })));
+    else if (f.blob) { try { thumbs.set(f.id, URL.createObjectURL(f.blob)); } catch { /* unreadable */ } }
   }
 }
 const fileStatusCache = new Map();
@@ -459,7 +461,8 @@ V.form = async (id) => {
       const kind = key === 'bdn' ? 'bdn' : key.startsWith('lop') ? 'lop' : trk ? (trkDel && trkDel.truck.type !== 'weigh' ? 'meter' : 'weighbridge') : key.startsWith('pip') ? 'meter' : 'photo';
       const section = key === 'bdn' ? 'bdn_document' : key.startsWith('lop') ? 'lop_photo' : key.startsWith('vno') ? 'photo_not_signed' : key.startsWith('trk') || key.startsWith('pip') ? 'photo_supplier_measurement' : 'photo_' + key;
       const takenAt = exifToIso(c.exif, S.order.utcOffset || S.survey.utcOffset);
-      await sync.addFile({ id: fid, job_id: id, kind, section, mime: c.mime, size: c.blob.size, blob: c.blob, taken_at: takenAt, exif_datetime_original: c.exif?.dateTimeOriginal || null, exif_offset: c.exif?.offset || null, label: `Photo · ${key}` });
+      const bytes = await c.blob.arrayBuffer(); // stored as bytes, not as Blob (iOS IndexedDB Blob bug)
+      await sync.addFile({ id: fid, job_id: id, kind, section, mime: c.mime, size: bytes.byteLength, bytes, taken_at: takenAt, exif_datetime_original: c.exif?.dateTimeOriginal || null, exif_offset: c.exif?.offset || null, label: `Photo · ${key}` });
       thumbs.set(fid, URL.createObjectURL(c.blob)); fileStatusCache.set(fid, 'pending');
       return { id: fid, from: c.from, to: c.to, taken_at: takenAt, w: c.width, h: c.height };
     },
@@ -477,7 +480,7 @@ V.form = async (id) => {
         if (!sig.file_id) {
           const png = await strokesToPng(sig.strokes);
           sig.file_id = fileId('sig');
-          await db.put('files', { id: sig.file_id, job_id: id, kind: 'signature', section: 'signature_' + k, mime: 'image/png', size: png.size, blob: png, taken_at: null, status: 'pending', attempts: 0, label: 'Signature · ' + (form.SIGLBL[k] || k), created_at: new Date().toISOString() });
+          await db.put('files', { id: sig.file_id, job_id: id, kind: 'signature', section: 'signature_' + k, mime: 'image/png', size: png.size, bytes: await png.arrayBuffer(), taken_at: null, status: 'pending', attempts: 0, label: 'Signature · ' + (form.SIGLBL[k] || k), created_at: new Date().toISOString() });
         }
         sigFiles[k] = sig.file_id;
       }
@@ -548,7 +551,8 @@ V.status = async (id) => {
       ['Report issued', 'GlobalBQS issues the report to the client.', false],
     ];
     const now = steps.findIndex((x) => !x[2]);
-    const pill = (f) => (f.status === 'uploaded' ? '<span class="pill ok">Uploaded</span>' : f.status === 'uploading' ? '<span class="pill info">Uploading</span>' : f.status === 'error' ? `<span class="pill warn" title="${esc(f.error || '')}">Retry ${f.attempts || 1}</span>` : '<span class="pill warn">Waiting</span>');
+    const pill = (f) => (f.status === 'uploaded' ? '<span class="pill ok">Uploaded</span>' : f.status === 'uploading' ? '<span class="pill info">Uploading</span>' : f.status === 'lost' ? '<span class="pill bad">Not sent</span>' : f.status === 'error' ? `<span class="pill warn" title="${esc(f.error || '')}">Retry ${f.attempts || 1}</span>` : '<span class="pill warn">Waiting</span>');
+    const failing = files.filter((f) => f.status === 'error' && (f.attempts || 0) >= 2);
     repaint(`${bar(sent ? 'Survey submitted' : blocked ? 'Not sent' : 'Waiting to send', `${esc(s.gbqs_reference || '')} · ${esc(s.vessel_name || '')}`, '#/job/' + id)}
     <div class="content">
       ${sent ? note('ok', `<b>Received by GlobalBQS.</b> Submission ID <span class="mono">${esc(ob.result?.submission_id || '')}</span>.${ob.result?.duplicate ? ' (already received earlier)' : ''}`)
@@ -559,7 +563,8 @@ V.status = async (id) => {
       ${ob ? `<div class="card"><div class="row"><h3>Outbox</h3>${sent ? '<span class="pill ok">All uploaded</span>' : `<span class="pill warn">${ob.status === 'sending' ? 'Sending' : 'Waiting'}</span>`}</div>
         <dl class="kv"><dt>Client reference</dt><dd class="mono small">${esc(ob.client_submission_id)}</dd><dt>Form version</dt><dd class="mono">${esc(ob.payload?.form_version || '')}</dd>${ob.last_error && !sent ? `<dt>Last attempt</dt><dd>${esc(textFor(ob.last_error))}</dd>` : ''}</dl>
         <ul class="ob" id="obList"><li><span>Survey data and figures<small>${(JSON.stringify(ob.payload).length / 1024).toFixed(1)} kB</small></span>${sent ? '<span class="pill ok">Sent</span>' : '<span class="pill warn">Waiting</span>'}</li>
-        ${files.map((f) => `<li data-file="${esc(f.id)}"><span>${esc(f.label || f.kind)}<small>${((f.size || 0) / 1048576).toFixed(2)} MB</small></span>${pill(f)}</li>`).join('')}</ul>
+        ${files.map((f) => `<li data-file="${esc(f.id)}"><span>${esc(f.label || f.kind)}<small>${((f.size || 0) / 1048576).toFixed(2)} MB${(f.status === 'error' || f.status === 'lost') && f.error_text ? ' · ' + esc(f.error_text) : ''}</small></span>${pill(f)}</li>`).join('')}</ul>
+        ${failing.length && !sent ? note('warn', `<b>${failing.length} file${failing.length > 1 ? 's' : ''} could not be uploaded yet.</b> The app keeps trying by itself. Tap <b>Send now</b> to retry immediately; if it keeps failing, contact GlobalBQS operations – your survey stays safe on this device.`) : ''}
         ${!sent && !blocked ? `<button class="btn ghost block" type="button" id="sendNow" ${navigator.onLine ? '' : 'disabled'}>Send now</button>` : ''}</div>` : ''}
       ${note('info', 'Job cancelled by the client while you were offline? Your submission will still be received and checked by ops. You do not need to do anything.')}
       <button class="btn primary block" type="button" data-go="#/">Back to my jobs</button>
@@ -638,6 +643,14 @@ async function boot() {
   document.addEventListener('click', (e) => {
     const g = e.target.closest('[data-go]'); if (g && !g.disabled) { e.preventDefault(); location.hash = g.dataset.go; return; }
     if (e.target.closest('[data-reload]')) location.reload();
+  });
+  sync.setRegenerator(async (f) => {
+    if (f.kind !== 'signature') return null;
+    const d = await db.get('drafts', f.job_id);
+    const sig = d && d.state && d.state.sig ? Object.values(d.state.sig).find((x) => x && x.file_id === f.id) : null;
+    if (!sig || !sig.strokes || !sig.strokes.length) return null;
+    const png = await strokesToPng(sig.strokes);
+    return png ? await png.arrayBuffer() : null;
   });
   sync.startLoop();
   registerSW();
