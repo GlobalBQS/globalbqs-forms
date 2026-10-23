@@ -62,6 +62,41 @@ const statusPill = (j, ob) => {
   return j.prefill ? '<span class="pill ok">Ready offline</span>' : '<span class="pill warn">Not downloaded</span>';
 };
 
+/** blank = the surveyor has not started on this device (start check not done, or never edited) */
+const isBlankLocal = (d) => !d || !d.state || !d.local_rev || !(d.state.gate && d.state.gate.done);
+const REOPEN_RE = /Reopened by GlobalBQS/;
+/** Adopt the server draft when this device has nothing newer. A job reopened for correction is seeded on the
+ *  server with the previous entries: that seed always wins over a local copy that does not contain it (the local
+ *  copy is kept as a backup in kv). A server draft in another format (no `state`) is never overwritten by an
+ *  empty local form. */
+async function adoptServerDraft(job, draft) {
+  const id = job.job_id;
+  const local = await db.get('drafts', id);
+  job.foreign_draft = false;
+  if (draft && draft.payload && draft.payload.state) {
+    const serverRev = draft.rev || 0, st = draft.payload.state;
+    const take = async () => {
+      if (local && local.state) { try { await db.kvSet('draft_backup:' + id, { saved_at: new Date().toISOString(), local }); } catch { /* */ } }
+      const lr = (local?.local_rev || 0) + 1;
+      await db.put('drafts', { job_id: id, state: st, local_rev: lr, saved_at: draft.saved_at || new Date().toISOString() });
+      job.server_rev = serverRev; job.pushed_local_rev = lr; delete job.pending_stale;
+    };
+    const reopenSeed = !!draft.payload.reopened_from && (st.audit || []).some((a) => REOPEN_RE.test(a.reason || ''));
+    const localHasSeed = !!(local && local.state && (local.state.audit || []).some((a) => REOPEN_RE.test(a.reason || '')));
+    if (!local || !local.state) await take();
+    else if (reopenSeed && !localHasSeed) await take();
+    else if (serverRev > (job.server_rev || 0)) {
+      const unpushed = local.local_rev !== job.pushed_local_rev;
+      if (!unpushed || isBlankLocal(local)) await take();
+      else job.pending_stale = { rev: serverRev, saved_at: draft.saved_at, payload: draft.payload };
+    }
+  } else if (draft) {
+    // previous-format draft on the server: keep the rev for later pushes, but do not push an empty form over it
+    job.server_rev = Math.max(job.server_rev || 0, draft.rev || 0);
+    job.foreign_draft = true;
+  }
+}
+
 /** store / refresh a job from a /job response that included the prefill (signed in) */
 async function storeJobFromOpen(token, r, sessionInfo) {
   const id = r.job.id;
@@ -79,23 +114,7 @@ async function storeJobFromOpen(token, r, sessionInfo) {
     opened_at: prev?.opened_at || new Date().toISOString(), updated_at: new Date().toISOString(),
   };
   if (r.job.status === 'submitted' && job.status !== 'submitted') { job.status = 'submitted'; job.read_only = true; job.read_only_reason = 'submitted'; }
-  // server draft: adopt it when this device has nothing newer
-  const local = await db.get('drafts', id);
-  if (r.draft && r.draft.payload && r.draft.payload.state) {
-    const serverRev = r.draft.rev || 0;
-    if (!local) {
-      await db.put('drafts', { job_id: id, state: r.draft.payload.state, local_rev: 1, saved_at: r.draft.saved_at });
-      job.server_rev = serverRev; job.pushed_local_rev = 1;
-    } else if (serverRev > (job.server_rev || 0)) {
-      const unpushed = local.local_rev !== job.pushed_local_rev;
-      if (!unpushed) {
-        await db.put('drafts', { job_id: id, state: r.draft.payload.state, local_rev: local.local_rev + 1, saved_at: r.draft.saved_at });
-        job.server_rev = serverRev; job.pushed_local_rev = local.local_rev + 1;
-      } else {
-        job.pending_stale = { rev: serverRev, saved_at: r.draft.saved_at, payload: r.draft.payload };
-      }
-    }
-  } else if (r.draft && !local) job.server_rev = r.draft.rev || 0;
+  await adoptServerDraft(job, r.draft);
   await db.put('jobs', job);
   return job;
 }
@@ -311,6 +330,7 @@ V.job = async (id) => {
   <div class="content">
     <div class="row">${statusPill(job, ob)}<span class="muted small">${job.synced_at ? 'Last synced ' + esc(timeAgo(job.synced_at)) : 'Not synced yet'}</span></div>
     ${roBanner(job)}
+    ${!job.read_only && !['queued', 'submitted'].includes(job.status) && draft && draft.state && (draft.state.audit || []).some((a) => REOPEN_RE.test(a.reason || '')) ? note('info', '<b>Reopened for correction.</b> Your previous entries and photos are loaded. Correct what is needed; the signatures must be collected again before you submit.') : ''}
     ${!supported ? note('warn', 'This survey type is not available in this app version yet. Use the form link from GlobalBQS operations.') : ''}
     <div class="card"><dl class="kv"><dt>IMO</dt><dd class="mono">${esc(pf.vessel?.imo || '—')}</dd><dt>Place</dt><dd>${esc(port.place || s.port || '—')}</dd><dt>ETA</dt><dd>${esc(sch.eta || s.eta || '—')}</dd><dt>ETB</dt><dd>${esc(sch.etb || '—')}</dd><dt>Grades</dt><dd>${esc(grades)}</dd><dt>Supplier</dt><dd>${esc(nom.supplier_name || '—')}</dd><dt>Agent</dt><dd>${esc(pf.parties?.agent || '—')}</dd>
       <dt>Form version</dt><dd class="mono">${esc(job.form_version || '1.0')}</dd>${job.submission?.submission_id ? `<dt>Submission ID</dt><dd class="mono">${esc(job.submission.submission_id)}</dd>` : ''}</dl></div>
@@ -430,7 +450,12 @@ async function refreshPrefill(job) {
   try {
     const r = await call('/job', { query: { token: job.token }, session: job.session });
     if (!r || r.needs_sign_in || !r.prefill) return null;
-    return await db.update('jobs', job.job_id, (j) => (j ? { ...j, prefill: r.prefill, summary: r.summary || j.summary, job_status: r.job?.status || j.job_status, prefill_at: new Date().toISOString() } : undefined));
+    const cur = await db.get('jobs', job.job_id);
+    if (!cur) return null;
+    const j = { ...cur, prefill: r.prefill, summary: r.summary || cur.summary, job_status: r.job?.status || cur.job_status, prefill_at: new Date().toISOString() };
+    if (!['queued', 'submitted'].includes(j.status)) await adoptServerDraft(j, r.draft);
+    await db.put('jobs', j);
+    return j;
   } catch { return null; }
 }
 

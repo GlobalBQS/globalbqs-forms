@@ -64,6 +64,8 @@ export function pushDraft(jobId, { force = false } = {}) {
     const draft = await db.get('drafts', jobId);
     if (!draft) return { skipped: true };
     if (!force && draft.local_rev === job.pushed_local_rev) return { skipped: true, upToDate: true };
+    // never overwrite a server draft of another format (e.g. the previous submission) with a form not started yet
+    if (job.foreign_draft && !(draft.state && draft.state.gate && draft.state.gate.done)) return { skipped: true, foreign: true };
     try {
       const r = await call('/draft', { method: 'POST', session: job.session, body: { rev: job.server_rev || 0, payload: { format: 'gbqs.forms.draft/1', form_key: job.form_key, form_version: job.form_version, saved_at: draft.saved_at, state: draft.state } } });
       const j2 = await db.update('jobs', jobId, (j) => ({ ...j, server_rev: r.rev, pushed_local_rev: draft.local_rev, synced_at: new Date().toISOString(), status: j.status === 'new' ? 'in_progress' : j.status }));
@@ -199,6 +201,17 @@ export async function enqueueSubmission(jobId, payload, fileIds) {
   return rec;
 }
 
+/** best effort: the last state (with signatures) is on the server before the submission, so a job reopened
+ *  for correction starts from exactly what was submitted */
+async function pushFinalDraft(jobId) {
+  try {
+    const job = await db.get('jobs', jobId), d = await db.get('drafts', jobId);
+    if (!job || !d || !d.state || d.local_rev === job.pushed_local_rev) return;
+    const r = await call('/draft', { method: 'POST', session: job.session, body: { rev: job.server_rev || 0, payload: { format: 'gbqs.forms.draft/1', form_key: job.form_key, form_version: job.form_version, saved_at: d.saved_at, state: d.state } } });
+    await db.update('jobs', jobId, (j) => ({ ...j, server_rev: r.rev, pushed_local_rev: d.local_rev, synced_at: new Date().toISOString() }));
+  } catch { /* not needed for the submission */ }
+}
+
 export function processOutbox(jobId, { force = false } = {}) {
   return exclusive('outbox:' + jobId, async () => {
     const ob = await db.get('outbox', jobId);
@@ -211,6 +224,7 @@ export function processOutbox(jobId, { force = false } = {}) {
     try {
       const filesOk = await uploadFiles(jobId, ob.file_ids || []);
       if (!filesOk) throw new ApiError(online() ? 'files_pending' : 'offline', 0, { stage: 'files' });
+      await pushFinalDraft(jobId);
       const r = await call('/submit', { method: 'POST', session: job.session, body: { client_submission_id: ob.client_submission_id, payload: ob.payload } });
       const done = { ...ob, status: 'sent', result: r, sent_at: new Date().toISOString(), last_error: null };
       await db.put('outbox', done);
