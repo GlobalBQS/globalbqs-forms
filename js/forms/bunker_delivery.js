@@ -403,7 +403,7 @@ R.before = () => {
 };
 R.after = () => {
   const s = S(), empty = !s.after.tanks.length;
-  return lockBar('final') + tabBar('after') + (s.ui.tab.after === 'sup' ? supTab('after') : `${s.before.tanks.length ? `<section class="card" data-lockphase="final"><div class="card-h"><h3>Same tanks as before?</h3><button class="btn ghost small" type="button" data-act="copyTanks">Copy tank list from before</button></div><p class="hint">Copies the tank names and method. Readings stay empty.${empty ? '' : ' Tanks already listed here are kept.'}</p></section>` : ''}` +
+  return lockBar('final') + tabBar('after') + (s.ui.tab.after === 'sup' ? supTab('after') : `${s.before.tanks.length ? `<section class="card" data-lockphase="final"><div class="card-h"><h3>Same tanks as before?</h3><button class="btn ghost small" type="button" data-act="copyTanks">Copy tanks from before</button></div><p class="hint">Copies all tanks with their readings from Before bunkering. Overwrite the tanks that received bunkers${empty ? '' : '; tanks already listed here are kept'}.</p></section>` : ''}` +
     active().map((g) => phaseGroup('after', g)).join('')) + CALC_NOTE;
 };
 R.bdn = () => lockBar('final') + active().map((g) => `<section class="card"><div class="card-h"><h3><span class="gchip">${g}</span>Deliveries (one per BDN)</h3><span data-calc="nom:${g}"></span></div>
@@ -553,7 +553,13 @@ export function act(a, b) {
     case 'delSmp': s.grades[b.dataset.g].del[+b.dataset.j].extra.splice(+b.dataset.k, 1); return done('Sample removed');
     case 'copyTanks': {
       const have = new Set(s.after.tanks.map((t) => t.grade + '|' + t.name)); let n = 0;
-      s.before.tanks.forEach((t) => { if (!have.has(t.grade + '|' + t.name)) { s.after.tanks.push(T(t.grade, t.name, t.method, 'after', { open: true, corr: false })); n++; } });
+      // copy completely: method, readings, TOV, temperature, density, trim/list flag; the surveyor overwrites the tanks that received bunkers
+      s.before.tanks.forEach((t) => {
+        if (have.has(t.grade + '|' + t.name)) return;
+        const hasDens = num(t.dens) != null;
+        s.after.tanks.push(T(t.grade, t.name, t.method, 'after', { open: false, corr: !!t.corr, reading: t.reading, tov: t.tov, temp: t.temp, dens: t.dens, rem: t.rem || '', densAuto: !hasDens }));
+        n++;
+      });
       return done(n ? `${n} tank${n > 1 ? 's' : ''} copied` : 'All tanks are already listed');
     }
     case 'addEv': {

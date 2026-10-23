@@ -266,6 +266,19 @@ export function mountForm(root, opts) {
     if (to !== from) { moveTs(S.ts.events, from, to); markSaved(); } render(false);
   };
   const onTouchMove = (e) => { if (drag) e.preventDefault(); };
+  // iOS Safari: keep the Back/Next bar on the bottom of the VISIBLE viewport (dynamic toolbar, keyboard,
+  // split view). While the on-screen keyboard is open the bar is hidden so it never floats over the form.
+  const foot = $('.foot', root), vv = window.visualViewport;
+  const placeFoot = () => {
+    if (!foot || !vv) return;
+    const gap = Math.round(window.innerHeight - (vv.height + vv.offsetTop));
+    const kb = gap > 120 || (document.activeElement && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName) && document.activeElement.type !== 'checkbox' && matchMedia('(pointer:coarse)').matches && gap > 40);
+    foot.classList.toggle('kb-open', !!kb);
+    foot.style.bottom = !kb && vv.scale <= 1.01 && gap > 0 ? gap + 'px' : '0px';
+  };
+  if (vv) { vv.addEventListener('resize', placeFoot); vv.addEventListener('scroll', placeFoot); }
+  window.addEventListener('scroll', placeFoot, { passive: true });
+  document.addEventListener('focusin', placeFoot); document.addEventListener('focusout', () => setTimeout(placeFoot, 50));
   let rz; const onResize = () => { clearTimeout(rz); rz = setTimeout(() => $$('canvas[data-sig]', main).forEach((cv) => cv._redraw && cv._redraw()), 150); };
 
   root.addEventListener('input', onBind);
@@ -294,6 +307,8 @@ export function mountForm(root, opts) {
       document.removeEventListener('keydown', onKey); document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('pointermove', onPointerMove); document.removeEventListener('pointerup', endDrag); document.removeEventListener('pointercancel', endDrag);
       document.removeEventListener('touchmove', onTouchMove); window.removeEventListener('resize', onResize);
+      if (vv) { vv.removeEventListener('resize', placeFoot); vv.removeEventListener('scroll', placeFoot); }
+      window.removeEventListener('scroll', placeFoot); document.removeEventListener('focusin', placeFoot);
       closeModal();
     },
   };

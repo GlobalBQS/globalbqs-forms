@@ -297,8 +297,9 @@ function roBanner(job) {
 }
 
 V.job = async (id) => {
-  const job = await db.get('jobs', id);
+  let job = await db.get('jobs', id);
   if (!job) { location.replace('#/'); return; }
+  job = (await refreshPrefill(job)) || job;
   const ob = await db.get('outbox', id);
   const s = job.summary || {}, pf = job.prefill || {};
   const draft = await db.get('drafts', id);
@@ -331,6 +332,7 @@ V.job = async (id) => {
 };
 
 // ---------- start check ----------
+const IMO_WARN = "IMO number check digit does not match – please verify against the vessel's certificate. You can continue; ops is informed.";
 const SURVEY_TYPES = ['Bunker Quantity Survey (B221)', 'On-Hire Bunker Survey', 'On-Hire Condition Survey', 'On-Hire B+C Survey (combined)', 'Off-Hire Bunker Survey', 'Off-Hire Condition Survey', 'Off-Hire B+C Survey (combined)', 'Bunker Delivery Survey'];
 async function loadState(job, form) {
   const d = await db.get('drafts', job.job_id);
@@ -345,6 +347,7 @@ V.check = async (id) => {
   const form = await loadForm(job.form_key);
   if (!form) { location.replace('#/job/' + id); return; }
   const S = await loadState(job, form);
+  if (job.prefill && S.order) refreshOrder(S, job.prefill);
   S.gate = S.gate || { answers: {}, fix: {}, done: false };
   const g = S.gate, o = S.order;
   const save = () => sync.saveLocal(id, S);
@@ -352,14 +355,14 @@ V.check = async (id) => {
   const gl = form.gateGrades(S);
   const fixOk = (k) => {
     const f = g.fix;
-    if (k === 'vessel') return !!String(f.vessel ?? o.vessel).trim() && imoOk(f.imo ?? o.imo);
+    if (k === 'vessel') return !!String(f.vessel ?? o.vessel).trim() && /^\d{7}$/.test(String(f.imo ?? o.imo ?? '').replace(/^IMO\s*/i, '').trim()); // check digit = warning only
     if (k === 'type') return !!f.typeExp;
     if (k === 'grades') return gl.some(([gg]) => String(f['g_' + gg] ?? '') !== '') || !!String(f.gradesNote || '').trim();
     return true;
   };
   const GATE = [
-    ['vessel', 'Vessel on board matches?', () => `<span class="big">${esc(o.vessel)}</span><span class="big">IMO ${esc(o.imo || '—')} ${imoOk(o.imo) ? '<span class="pill ok">Check digit OK</span>' : '<span class="pill bad">Check digit wrong</span>'}</span><span class="muted small">Check the IMO number on the ship's certificates, not only the name.</span>`,
-      () => { const imo = g.fix.imo ?? o.imo, ok = imoOk(imo); return fin('vessel', 'Vessel name as on board', g.fix.vessel ?? o.vessel) + fin('imo', 'IMO number (7 digits)', imo, { num: 1, max: 7, mono: 1, bad: !ok }) + `<span class="${ok ? 'okm' : 'err'}" data-imomsg>${ok ? 'IMO check digit OK.' : 'IMO check digit does not match. Check the number on the certificates.'}</span>`; }],
+    ['vessel', 'Vessel on board matches?', () => `<span class="big">${esc(o.vessel)}</span><span class="big">IMO ${esc(o.imo || '—')} ${imoOk(o.imo) ? '<span class="pill ok">Check digit OK</span>' : '<span class="pill warn">Check digit does not match</span>'}</span>${imoOk(o.imo) ? '' : `<span class="err" style="color:var(--neg)">${IMO_WARN}</span>`}<span class="muted small">Check the IMO number on the ship's certificates, not only the name.</span>`,
+      () => { const imo = g.fix.imo ?? o.imo, ok = imoOk(imo); return fin('vessel', 'Vessel name as on board', g.fix.vessel ?? o.vessel) + fin('imo', 'IMO number (7 digits)', imo, { num: 1, max: 7, mono: 1, bad: !ok }) + `<span class="${ok ? 'okm' : 'err'}" data-imomsg>${ok ? 'IMO check digit OK.' : IMO_WARN}</span>`; }],
     ['type', 'Is this the survey you are asked to do?', () => `<span class="big">${esc(o.type)}</span>`,
       () => `<label for="fx_typeExp">Which survey does the vessel/Master expect?</label><select id="fx_typeExp" data-fix="typeExp" class="sel"><option value="">Choose…</option>${SURVEY_TYPES.filter((t) => t !== o.type).map((t) => `<option ${g.fix.typeExp === t ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>
         <label for="fx_typeNote">Remark (optional)</label><textarea id="fx_typeNote" data-fix="typeNote">${esc(g.fix.typeNote || '')}</textarea><span class="muted small">You carry on with the ${esc(o.type)}. Ops sees the mismatch and contacts the client if needed.</span>`],
@@ -388,7 +391,7 @@ V.check = async (id) => {
   const onInput = (e) => {
     const f = e.target.closest('[data-fix]'); if (!f || job.read_only) return;
     g.fix[f.dataset.fix] = f.value;
-    if (f.dataset.fix === 'imo') { const ok = imoOk(f.value); f.classList.toggle('bad', !ok); const m = app.querySelector('[data-imomsg]'); if (m) { m.className = ok ? 'okm' : 'err'; m.textContent = ok ? 'IMO check digit OK.' : 'IMO check digit does not match. Check the number on the certificates.'; } }
+    if (f.dataset.fix === 'imo') { const ok = imoOk(f.value); f.classList.toggle('bad', !ok); const m = app.querySelector('[data-imomsg]'); if (m) { m.className = ok ? 'okm' : 'err'; m.textContent = ok ? 'IMO check digit OK.' : IMO_WARN; } }
     app.querySelectorAll('[data-fixstate]').forEach((s) => { s.textContent = fixOk(s.dataset.fixstate) ? 'Saved for ops.' : ''; });
     $('#startForm').disabled = !allOk();
     save();
@@ -408,6 +411,27 @@ async function loadThumbs(jobId) {
 const fileStatusCache = new Map();
 async function refreshFileStatus(jobId) { for (const f of await db.byIndex('files', 'job_id', jobId)) fileStatusCache.set(f.id, f.status); }
 
+/** read-only order data in a draft always follows the latest prefill (vessel, IMO, port, parties, charter) */
+function refreshOrder(S, pf) {
+  const o = S.order, sv = pf.survey || {}, port = pf.port || {}, ves = pf.vessel || {}, par = pf.parties || {}, sch = pf.schedule || {};
+  const setIf = (k, v) => { if (v != null && v !== '') o[k] = String(v); };
+  setIf('ref', sv.gbqs_reference); setIf('vessel', ves.name); setIf('imo', ves.imo); setIf('place', port.place || port.name); setIf('port', port.name);
+  setIf('etb', sch.etb || sch.eta); setIf('type', sv.survey_type_label); setIf('client', pf.client?.name); setIf('owner', par.owner); setIf('charterer', par.charterer);
+  setIf('agent', par.agent); setIf('po', sv.po_number);
+  if (port.utc_offset && offsetMin(port.utc_offset) != null) o.utcOffset = port.utc_offset;
+  const tol = pf.tolerance_pct ?? pf.client?.delivery_tolerance_pct; if (tol != null) o.tol = tol;
+  o.charter = pf.charter ?? null; o.onHire = pf.on_hire_survey ?? null;
+}
+/** refresh prefill (and summary) in the background whenever a job is opened with signal */
+async function refreshPrefill(job) {
+  if (!navigator.onLine || !job.session || job.read_only) return null;
+  try {
+    const r = await call('/job', { query: { token: job.token }, session: job.session });
+    if (!r || r.needs_sign_in || !r.prefill) return null;
+    return await db.update('jobs', job.job_id, (j) => (j ? { ...j, prefill: r.prefill, summary: r.summary || j.summary, job_status: r.job?.status || j.job_status, prefill_at: new Date().toISOString() } : undefined));
+  } catch { return null; }
+}
+
 V.form = async (id) => {
   let job = await db.get('jobs', id);
   if (!job) { location.replace('#/'); return; }
@@ -416,7 +440,7 @@ V.form = async (id) => {
   if (job.status === 'queued' || job.status === 'submitted') { location.replace('#/job/' + id + '/status'); return; }
   const S = await loadState(job, form);
   // read-only order data always follows the latest prefill (charter party, on-hire survey)
-  if (job.prefill && S.order) { S.order.charter = job.prefill.charter ?? null; S.order.onHire = job.prefill.on_hire_survey ?? null; }
+  if (job.prefill && S.order) refreshOrder(S, job.prefill);
   await loadThumbs(id); await refreshFileStatus(id);
   if (cleanup) { try { cleanup(); } catch { /* */ } cleanup = null; }
   closeModal();

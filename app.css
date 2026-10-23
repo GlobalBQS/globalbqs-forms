@@ -34,7 +34,10 @@
 *{box-sizing:border-box}
 [hidden]{display:none!important}
 html{-webkit-text-size-adjust:100%; scroll-padding-top:env(safe-area-inset-top,0px)}
-body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:15px; line-height:1.45; min-height:100vh; overflow-x:hidden}
+/* No overflow:hidden on body: on iOS Safari that turns body into the scroll container and position:fixed
+   elements (the Back/Next bar) then scroll with the page. overflow-x:clip clips without creating a scroller. */
+html{overflow-x:clip}
+body{margin:0; background:var(--bg); color:var(--ink); font-family:var(--sans); font-size:15px; line-height:1.45; min-height:100vh; min-height:100dvh}
 body::before{content:""; position:fixed; inset:0 0 auto; height:env(safe-area-inset-top,0px); z-index:30; background:var(--bar)}
 button,input,select,textarea{font:inherit; color:inherit}
 :focus-visible{outline:3px solid var(--accent); outline-offset:2px}
@@ -43,7 +46,6 @@ button,input,select,textarea{font:inherit; color:inherit}
 .small{font-size:12.5px}
 .err{font-size:13px; color:var(--crit); font-weight:500}
 .boot{display:grid; place-items:center; min-height:60vh; color:var(--muted)}
-.form-app body, .form-app{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
 
 /* demo ribbon */
 .demo-ribbon{display:none}
@@ -141,7 +143,7 @@ ol.howto{margin:0; padding-left:20px; display:grid; gap:8px}
 select.sel{min-height:48px; padding:10px 12px; border-radius:9px; border:1px solid var(--line-strong); background:var(--input); font-size:16px; width:100%}
 
 /* ================= form (from the Survey Form mockup) ================= */
-.form-app{padding-bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+.form-app{padding-bottom:calc(104px + env(safe-area-inset-bottom,0px))}
 .top{position:sticky; top:env(safe-area-inset-top,0px); z-index:20; background:linear-gradient(115deg,var(--bar) 0%,var(--bar-2) 100%); color:var(--bar-ink)}
 .top-in{max-width:1180px; margin:0 auto; padding-block:10px 12px; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px)); display:grid; gap:8px}
 .top-row{display:flex; align-items:center; justify-content:space-between; gap:12px}
@@ -154,7 +156,7 @@ select.sel{min-height:48px; padding:10px 12px; border-radius:9px; border:1px sol
 #roBanner .ro-wrap{max-width:1180px; margin:12px auto 0; padding:0 max(16px,env(safe-area-inset-left,0px))}
 main.ro .sig canvas{cursor:not-allowed}
 
-.layout{max-width:1180px; margin:0 auto; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px)); padding-block:14px 24px; display:grid; gap:16px}
+.layout{max-width:1180px; margin:0 auto; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px)); padding-block:14px 32px; display:grid; gap:16px}
 .steps{display:flex; gap:8px; overflow-x:auto; padding:2px 2px 6px; margin:0 -2px; scrollbar-width:thin}
 .steps button{flex:none; display:flex; align-items:center; gap:8px; min-height:44px; padding:0 14px 0 8px; border-radius:999px; border:1px solid var(--line); background:var(--surface); color:var(--ink); font-size:14px; font-weight:500; cursor:pointer; text-align:left}
 .steps button .n{width:26px; height:26px; border-radius:50%; display:grid; place-items:center; font-family:var(--mono); font-size:12px; font-weight:600; background:var(--surface-2); color:var(--muted); border:1px solid var(--line)}
@@ -333,7 +335,7 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
 .flags{display:grid; gap:8px; margin:0; padding:0; list-style:none}
 .flags li{display:flex; gap:10px; align-items:flex-start; padding:10px 12px; border-radius:9px; background:var(--surface-2); border:1px solid var(--line); font-size:14px}
 .flags li .pill{flex:none}
-.foot{position:fixed; left:0; right:0; bottom:0; z-index:20; background:var(--surface); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom,0px)}
+.foot{position:fixed; left:0; right:0; bottom:0; z-index:20; background:var(--surface); border-top:1px solid var(--line); padding-bottom:env(safe-area-inset-bottom,0px); -webkit-transform:translate3d(0,0,0); transform:translate3d(0,0,0); box-shadow:0 -6px 18px rgba(10,26,51,.08)}
 .foot-in{max-width:1180px; margin:0 auto; padding-block:10px; padding-left:max(16px,env(safe-area-inset-left,0px)); padding-right:max(16px,env(safe-area-inset-right,0px)); display:flex; align-items:center; justify-content:space-between; gap:12px}
 .foot .where{font-size:13px; color:var(--muted); text-align:center; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
 .foot .where b{color:var(--ink); font-weight:600}
@@ -366,3 +368,5 @@ input[type=date]::-webkit-date-and-time-value,input[type=time]::-webkit-date-and
 .link-tag b{color:var(--crit); font-weight:600}
 .steps .sep{flex:none; align-self:center; font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); padding:0 4px}
 @media (min-width:1000px){ .steps .sep{padding:10px 4px 2px; align-self:flex-start} }
+
+.foot.kb-open{visibility:hidden}
