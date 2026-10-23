@@ -63,39 +63,8 @@ const statusPill = (j, ob) => {
 };
 
 /** blank = the surveyor has not started on this device (start check not done, or never edited) */
-const isBlankLocal = (d) => !d || !d.state || !d.local_rev || !(d.state.gate && d.state.gate.done);
 const REOPEN_RE = /Reopened by GlobalBQS/;
-/** Adopt the server draft when this device has nothing newer. A job reopened for correction is seeded on the
- *  server with the previous entries: that seed always wins over a local copy that does not contain it (the local
- *  copy is kept as a backup in kv). A server draft in another format (no `state`) is never overwritten by an
- *  empty local form. */
-async function adoptServerDraft(job, draft) {
-  const id = job.job_id;
-  const local = await db.get('drafts', id);
-  job.foreign_draft = false;
-  if (draft && draft.payload && draft.payload.state) {
-    const serverRev = draft.rev || 0, st = draft.payload.state;
-    const take = async () => {
-      if (local && local.state) { try { await db.kvSet('draft_backup:' + id, { saved_at: new Date().toISOString(), local }); } catch { /* */ } }
-      const lr = (local?.local_rev || 0) + 1;
-      await db.put('drafts', { job_id: id, state: st, local_rev: lr, saved_at: draft.saved_at || new Date().toISOString() });
-      job.server_rev = serverRev; job.pushed_local_rev = lr; delete job.pending_stale;
-    };
-    const reopenSeed = !!draft.payload.reopened_from && (st.audit || []).some((a) => REOPEN_RE.test(a.reason || ''));
-    const localHasSeed = !!(local && local.state && (local.state.audit || []).some((a) => REOPEN_RE.test(a.reason || '')));
-    if (!local || !local.state) await take();
-    else if (reopenSeed && !localHasSeed) await take();
-    else if (serverRev > (job.server_rev || 0)) {
-      const unpushed = local.local_rev !== job.pushed_local_rev;
-      if (!unpushed || isBlankLocal(local)) await take();
-      else job.pending_stale = { rev: serverRev, saved_at: draft.saved_at, payload: draft.payload };
-    }
-  } else if (draft) {
-    // previous-format draft on the server: keep the rev for later pushes, but do not push an empty form over it
-    job.server_rev = Math.max(job.server_rev || 0, draft.rev || 0);
-    job.foreign_draft = true;
-  }
-}
+const adoptServerDraft = (job, draft) => sync.adoptServerDraft(job, draft);
 
 /** store / refresh a job from a /job response that included the prefill (signed in) */
 async function storeJobFromOpen(token, r, sessionInfo) {
@@ -366,6 +335,7 @@ V.check = async (id) => {
   if (!job) { location.replace('#/'); return; }
   const form = await loadForm(job.form_key);
   if (!form) { location.replace('#/job/' + id); return; }
+  await pullFirst(id);
   const S = await loadState(job, form);
   if (job.prefill && S.order) refreshOrder(S, job.prefill);
   S.gate = S.gate || { answers: {}, fix: {}, done: false };
@@ -459,12 +429,22 @@ async function refreshPrefill(job) {
   } catch { return null; }
 }
 
+/** before showing a draft: get the server's version when online (max 5 s; offline the local copy is used) */
+async function pullFirst(id) {
+  if (!navigator.onLine) return null;
+  try { return await Promise.race([sync.pullServerDraft(id), new Promise((r) => setTimeout(() => r(null), 5000))]); } catch { return null; }
+}
+
 V.form = async (id) => {
+  const seq = routeSeq;
   let job = await db.get('jobs', id);
   if (!job) { location.replace('#/'); return; }
   const form = await loadForm(job.form_key);
   if (!form) { location.replace('#/job/' + id); return; }
   if (job.status === 'queued' || job.status === 'submitted') { location.replace('#/job/' + id + '/status'); return; }
+  await pullFirst(id);
+  if (seq !== routeSeq) return;
+  job = (await db.get('jobs', id)) || job;
   const S = await loadState(job, form);
   // read-only order data always follows the latest prefill (charter party, on-hire survey)
   if (job.prefill && S.order) refreshOrder(S, job.prefill);
@@ -545,13 +525,23 @@ V.form = async (id) => {
   const onNet = () => updNet();
   sync.bus.addEventListener('readonly', onRO); sync.bus.addEventListener('synced', onSynced); sync.bus.addEventListener('files', onFiles);
   sync.bus.addEventListener('stale', onStale); sync.bus.addEventListener('signin', onSignin); sync.bus.addEventListener('net', onNet);
-  const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
+  let reloading = false;
+  const reloadForm = (msg) => { if (reloading) return; reloading = true; clearTimeout(saveT); saveT = null; toast(msg); route(); };
+  const onAdopted = (e) => { if (e.detail.jobId === id) reloadForm('Latest saved version loaded from GlobalBQS.'); };
+  const onHide = async () => {
+    if (document.visibilityState === 'hidden') { flush(); return; }
+    // back in front: pick up a newer / fuller version saved on GlobalBQS
+    await flush();
+    const r = await pullFirst(id);
+    if (r && r.pending) { const j = await db.get('jobs', id); const ps = j && j.pending_stale; if (ps) { await db.put('jobs', { ...j, pending_stale: null }); onStale({ detail: { jobId: id, serverRev: ps.rev, server: { rev: ps.rev, saved_at: ps.saved_at, payload: ps.payload } } }); } }
+  };
+  sync.bus.addEventListener('adopted', onAdopted);
   document.addEventListener('visibilitychange', onHide); addEventListener('pagehide', flush);
   cleanup = () => {
     flush(); ctl.destroy();
     sync.bus.removeEventListener('readonly', onRO); sync.bus.removeEventListener('synced', onSynced); sync.bus.removeEventListener('files', onFiles);
     sync.bus.removeEventListener('stale', onStale); sync.bus.removeEventListener('signin', onSignin); sync.bus.removeEventListener('net', onNet);
-    document.removeEventListener('visibilitychange', onHide); removeEventListener('pagehide', flush);
+    document.removeEventListener('visibilitychange', onHide); removeEventListener('pagehide', flush); sync.bus.removeEventListener('adopted', onAdopted);
   };
   // a newer server draft found while opening the link, with local unpushed changes: ask now
   if (job.pending_stale) {

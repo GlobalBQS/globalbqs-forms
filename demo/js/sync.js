@@ -40,6 +40,82 @@ export async function saveLocal(jobId, state) {
   return rec;
 }
 
+// ---------- server draft -> device ----------
+// Number of filled-in values in a draft state (same rule as gbqs_form_state_filled on the server): order data from
+// the prefill, ui, meta, start check, audit and signatures do not count.
+const NOT_COUNTED = new Set(['order', 'ui', 'meta', 'gate', 'audit', 'form_key', 'v', 'VT', 'ts', 'final', 'sig', 'smode', 'vno']);
+export function filledCount(state) {
+  let n = 0;
+  const walk = (x) => {
+    if (x == null) return;
+    if (Array.isArray(x)) { x.forEach(walk); return; }
+    if (typeof x === 'object') { Object.values(x).forEach(walk); return; }
+    if (x === '' || x === false) return;
+    n++;
+  };
+  if (state && typeof state === 'object') for (const [k, v] of Object.entries(state)) if (!NOT_COUNTED.has(k)) walk(v);
+  return n;
+}
+const REOPEN_RE = /Reopened by GlobalBQS/;
+const hasReopen = (st) => !!(st && Array.isArray(st.audit) && st.audit.some((a) => REOPEN_RE.test(a.reason || '')));
+/** clearly less filled in than the other state (e.g. an empty form against a filled-in one) */
+export const muchEmptier = (a, b) => { const fa = filledCount(a), fb = filledCount(b); return fb - fa >= 10 && fa * 2 < fb; };
+
+/** Adopt the server draft (mutates `job`, stores the draft; the caller stores the job). Rules:
+ *  - no local draft -> take the server's;
+ *  - a job reopened for correction: the seed (previous entries) wins over a local copy without it;
+ *  - server rev newer: take it unless this device has unpushed changes; with unpushed changes take it anyway
+ *    when the local copy is less filled in, otherwise ask (pending_stale);
+ *  - never keep a clearly emptier local copy when the server has a filled-in draft of the same or newer rev.
+ *  A replaced local copy is kept as a backup (kv draft_backup:<job>). Returns true when adopted. */
+export async function adoptServerDraft(job, draft) {
+  const id = job.job_id;
+  const local = await db.get('drafts', id);
+  job.foreign_draft = false;
+  if (draft && draft.payload && draft.payload.state) {
+    const serverRev = draft.rev || 0, st = draft.payload.state, known = job.server_rev || 0;
+    const take = async () => {
+      if (local && local.state) { try { await db.kvSet('draft_backup:' + id, { saved_at: new Date().toISOString(), server_rev: known, local }); } catch { /* */ } }
+      const lr = (local?.local_rev || 0) + 1;
+      await db.put('drafts', { job_id: id, state: st, local_rev: lr, saved_at: draft.saved_at || new Date().toISOString() });
+      job.server_rev = serverRev; job.pushed_local_rev = lr; job.pending_stale = null;
+      emit('adopted', { jobId: id, rev: serverRev });
+      return true;
+    };
+    if (!local || !local.state) return take();
+    if (draft.payload.reopened_from && hasReopen(st) && !hasReopen(local.state)) return take();
+    if (serverRev >= known && muchEmptier(local.state, st)) return take();
+    if (serverRev > known) {
+      const unpushed = local.local_rev !== job.pushed_local_rev;
+      if (!unpushed || filledCount(local.state) < filledCount(st)) return take();
+      job.pending_stale = { rev: serverRev, saved_at: draft.saved_at, payload: draft.payload };
+    }
+    return false;
+  }
+  if (draft && draft.payload) {
+    // previous-format draft on the server: keep the rev for later pushes, but do not push an empty form over it
+    job.server_rev = Math.max(job.server_rev || 0, draft.rev || 0);
+    job.foreign_draft = true;
+  }
+  return false;
+}
+
+/** Fetch the server draft and adopt it when it is newer / fuller (job open, form open, app back in front). */
+export function pullServerDraft(jobId) {
+  return exclusive('draft:' + jobId, async () => {
+    const job = await db.get('jobs', jobId);
+    if (!job || !job.session || job.read_only || !online()) return { skipped: true };
+    if (['queued', 'submitted'].includes(job.status)) return { skipped: true };
+    let r;
+    try { r = await call('/draft', { session: job.session }); } catch (e) { await handleAuthError(jobId, e); return { error: e.code }; }
+    if (!r || !r.payload) return { none: true };
+    const cur = await db.get('jobs', jobId);
+    const adopted = await adoptServerDraft(cur, { rev: r.rev, saved_at: r.saved_at, payload: r.payload });
+    await db.put('jobs', cur);
+    return { adopted, pending: !!cur.pending_stale };
+  });
+}
+
 // ---------- draft push ----------
 const timers = new Map();
 const running = new Map();
@@ -56,7 +132,7 @@ function exclusive(key, fn) {
   return p;
 }
 
-export function pushDraft(jobId, { force = false } = {}) {
+export function pushDraft(jobId, { force = false, allowShrink = false } = {}) {
   return exclusive('draft:' + jobId, async () => {
     const job = await db.get('jobs', jobId);
     if (!job || !job.session || job.read_only || !online()) return { skipped: true };
@@ -67,7 +143,7 @@ export function pushDraft(jobId, { force = false } = {}) {
     // never overwrite a server draft of another format (e.g. the previous submission) with a form not started yet
     if (job.foreign_draft && !(draft.state && draft.state.gate && draft.state.gate.done)) return { skipped: true, foreign: true };
     try {
-      const r = await call('/draft', { method: 'POST', session: job.session, body: { rev: job.server_rev || 0, payload: { format: 'gbqs.forms.draft/1', form_key: job.form_key, form_version: job.form_version, saved_at: draft.saved_at, state: draft.state } } });
+      const r = await call('/draft', { method: 'POST', session: job.session, body: { rev: job.server_rev || 0, payload: { format: 'gbqs.forms.draft/1', form_key: job.form_key, form_version: job.form_version, saved_at: draft.saved_at, state: draft.state, ...(allowShrink ? { allow_shrink: true } : {}) } } });
       const j2 = await db.update('jobs', jobId, (j) => ({ ...j, server_rev: r.rev, pushed_local_rev: draft.local_rev, synced_at: new Date().toISOString(), status: j.status === 'new' ? 'in_progress' : j.status }));
       emit('synced', { jobId, job: j2 });
       return { ok: true, rev: r.rev };
@@ -75,6 +151,11 @@ export function pushDraft(jobId, { force = false } = {}) {
       if (e instanceof ApiError && e.code === 'stale') {
         let server = null;
         try { server = await call('/draft', { session: job.session }); } catch (e2) { if (await handleAuthError(jobId, e2)) return { error: e2.code }; }
+        // the server has a fuller version (e.g. a job reopened with the previous entries): take it, keep ours as backup
+        if (server && server.payload && server.payload.state) {
+          const cur = await db.get('jobs', jobId);
+          if (await adoptServerDraft(cur, { rev: server.rev, saved_at: server.saved_at, payload: server.payload })) { await db.put('jobs', cur); return { adopted: true }; }
+        }
         emit('stale', { jobId, serverRev: e.data.server_rev, server });
         return { stale: true };
       }
@@ -90,7 +171,7 @@ export function pushDraft(jobId, { force = false } = {}) {
 export async function resolveStale(jobId, choice, server) {
   if (choice === 'mine') {
     await db.update('jobs', jobId, (j) => ({ ...j, server_rev: server?.rev ?? j.server_rev }));
-    return pushDraft(jobId, { force: true });
+    return pushDraft(jobId, { force: true, allowShrink: true });
   }
   const state = server?.payload?.state;
   if (state) {
