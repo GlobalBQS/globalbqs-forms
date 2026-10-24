@@ -1,13 +1,13 @@
-export const __v = '1.1.14-20261024-96ce6caf';
+export const __v = '1.1.15-20261024-fe444f3a';
 // Bunker Delivery Survey (form_key bunker_delivery_survey) - port of the approved mockup "as received",
 // with prefill from the job, and the submit payload in contract gbqs.forms/1.
-import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.14-20261024-96ce6caf';
-import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.14-20261024-96ce6caf';
+import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.15-20261024-fe444f3a';
+import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.15-20261024-fe444f3a';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker, sigGate,
-  tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled,
-} from './components.js?v=1.1.14-20261024-96ce6caf';
+  tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled, reveal,
+} from './components.js?v=1.1.15-20261024-fe444f3a';
 
 export const key = 'bunker_delivery_survey';
 export const title = 'Bunker Delivery Survey';
@@ -314,7 +314,7 @@ function phaseGroup(phase, g) {
 function delivCard(g, d, j) {
   const p = `grades.${g}.del.${j}`, many = S().grades[g].del.length > 1;
   const nameField = d.by === 'barge' ? field('Name of the barge', p + '.name', { req: 1 }) : d.by === 'truck' ? field('Truck licence plate', p + '.name', { req: 1 }) : d.by === 'pipeline' ? field('Terminal / pipeline', p + '.name', { opt: 1 }) : '';
-  return `<div class="deliv"><div class="card-h"><span class="lbl">Delivery ${j + 1}</span>${many ? `<button class="icon-btn" type="button" data-act="delDel" data-g="${g}" data-j="${j}" aria-label="Remove delivery ${j + 1}">${ICON.x}</button>` : ''}</div>
+  return `<div class="deliv" data-del="${g}:${j}"><div class="card-h"><span class="lbl">Delivery ${j + 1}</span>${many ? `<button class="icon-btn" type="button" data-act="delDel" data-g="${g}" data-j="${j}" aria-label="Remove delivery ${j + 1}">${ICON.x}</button>` : ''}</div>
     <div class="grid two">${field('BDN number', p + '.bdn', { req: 1 })}<div class="field"><span class="lbl">Delivered by</span><div class="out"><span class="v">${BYL[d.by] || '—'}</span><button class="btn ghost small" type="button" data-act="gotoSup" data-keep>Set in step 3</button></div></div></div>
     ${nameField ? `<div class="grid two">${nameField}</div>` : ''}
     <div class="grid two">${field('BDN quantity', p + '.qty', { numeric: 1, unit: 'MT', req: 1, hint: 'From the signed BDN.' })}${field('BDN density @ 15 °C', p + '.dens', { numeric: 1, unit: 'kg/l', req: 1, kind: 'dens' })}</div>
@@ -550,13 +550,13 @@ export function act(a, b) {
       const ph = b.dataset.phase, fam = famOf(b.dataset.grade);
       if (!freeTanks(s.VT, fam, usedTankKeys(s[ph].tanks, famOf))) toast(`All ${fam === 'do' ? 'gas oil / diesel' : 'fuel oil'} tanks of this vessel are already in this list. Use “Tank not on the list…” only for a tank that is missing.`);
       s[ph].tanks.push(T(b.dataset.grade, '', 'S', ph, { open: true, corr: false })); fm.markSaved(); fm.render(false);
-      const sel = document.querySelector(`select[data-tanksel="${ph}:${s[ph].tanks.length - 1}"]`); if (sel) sel.focus(); return true;
+      const n = s[ph].tanks.length - 1; reveal(`[data-tank="${ph}:${n}"]`, `select[data-tanksel="${ph}:${n}"]`); return true;
     }
     case 'emptyBefore': s.after.tanks[+b.dataset.i].emptyBefore = b.dataset.v === '1'; return done();
     case 'densManual': case 'densAuto': { const t = s.after.tanks[+b.dataset.i]; t.densAuto = a === 'densAuto'; if (!t.densAuto && !t.dens) { const x = autoDens(t); if (x) t.dens = x.d.toFixed(4); } return done(); }
     case 'tab': s.ui.tab[b.dataset.ph] = b.dataset.t; fm.render(false); return true;
     case 'gotoSup': s.ui.tab.before = 'sup'; s.ui.step = SI('before'); fm.render(true); return true;
-    case 'addBT': s.grades[b.dataset.g].del[+b.dataset.j].btanks.push({ id: nid(), name: '', open: true, b: BM(), a: BM() }); return done();
+    case 'addBT': { const L = s.grades[b.dataset.g].del[+b.dataset.j].btanks; L.push({ id: nid(), name: '', open: true, b: BM(), a: BM() }); done(); reveal(document.querySelector(`[data-act="delBT"][data-g="${b.dataset.g}"][data-j="${b.dataset.j}"][data-i="${L.length - 1}"]`)?.closest('.tank')); return true; }
     case 'btToggle': { const t = s.grades[b.dataset.g].del[+b.dataset.j].btanks[+b.dataset.i]; t.open = !t.open; fm.render(false); return true; }
     case 'delBT': {
       const L = s.grades[b.dataset.g].del[+b.dataset.j].btanks, t = L[+b.dataset.i]; if (!t) return true;
@@ -564,13 +564,13 @@ export function act(a, b) {
         .then((v) => { if (v) { const k = L.indexOf(t); if (k >= 0) L.splice(k, 1); done('Barge tank removed'); } });
       return true;
     }
-    case 'addDel': s.grades[b.dataset.g].del.push(D()); return done();
+    case 'addDel': { const L = s.grades[b.dataset.g].del; L.push(D()); done(); reveal(`[data-del="${b.dataset.g}:${L.length - 1}"]`); return true; }
     case 'delDel': {
       const L = s.grades[b.dataset.g].del, d = L[+b.dataset.j]; if (!d) return true;
       removeRow(`Remove ${b.dataset.g} delivery ${+b.dataset.j + 1}?`, rowFilled({ ...d, truck: { ...d.truck, type: '' } }), () => { const k = L.indexOf(d); if (k >= 0) L.splice(k, 1); }, () => done('Delivery removed'));
       return true;
     }
-    case 'addSmp': s.grades[b.dataset.g].del[+b.dataset.j].extra.push({ id: nid(), type: '', seal: '', desc: '', remark: '' }); return done();
+    case 'addSmp': { const L = s.grades[b.dataset.g].del[+b.dataset.j].extra; L.push({ id: nid(), type: '', seal: '', desc: '', remark: '' }); done(); reveal(document.querySelector(`[data-act="delSmp"][data-g="${b.dataset.g}"][data-j="${b.dataset.j}"][data-k="${L.length - 1}"]`)?.closest('.srow')); return true; }
     case 'delSmp': {
       const L = s.grades[b.dataset.g].del[+b.dataset.j].extra, r = L[+b.dataset.k]; if (!r) return true;
       removeRow(`Remove added sample ${+b.dataset.k + 1}?`, rowFilled(r), () => { const k = L.indexOf(r); if (k >= 0) L.splice(k, 1); }, () => done('Sample removed'));
@@ -594,7 +594,7 @@ export function act(a, b) {
       const prevD = [...ev].reverse().find((e) => e.d); const label = nv.type === 'other' ? String(nv.other || '').trim() : def[1];
       if (!label) { toast('Enter the event description.'); return true; }
       ev.push({ id: nid(), label, code: nv.type, d: prevD ? prevD.d : '', t: '', key: false, custom: true }); s.newEv = { type: '', other: '' }; fm.markSaved(); fm.render(false);
-      const ti = document.getElementById('ts_' + (ev.length - 1)); if (ti) ti.focus(); return true;
+      const ti = document.getElementById('ts_' + (ev.length - 1)); reveal(ti && (ti.closest('tr, .ts-row, li, .row') || ti), ti); return true;
     }
     default: return false;
   }

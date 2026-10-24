@@ -1,4 +1,4 @@
-export const __v = '1.1.14-20261024-96ce6caf';
+export const __v = '1.1.15-20261024-fe444f3a';
 // Shared UI helpers: escaping, icons, notes, toast, modal dialogs.
 export const $ = (s, root = document) => root.querySelector(s);
 export const $$ = (s, root = document) => [...root.querySelectorAll(s)];

@@ -1,16 +1,16 @@
-export const __v = '1.1.14-20261024-96ce6caf';
+export const __v = '1.1.15-20261024-fe444f3a';
 // B221 (Bunker Quantity Survey), On-/Off-Hire Bunker, On-/Off-Hire B+C and On-/Off-Hire Condition.
 // One factory, four approved mockups ("as received"): the B+C mockup is the union of the bunker part
 // (vessel, fuel types & logbook, tank soundings, result) and the condition part (hull & main deck,
 // deck fittings & safety, cargo holds, engine room, damages & conclusion). Shared components from
 // components.js (tank rows, signatures with the "sign only when complete" rule, photos, LOP, review).
-import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.14-20261024-96ce6caf';
-import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.14-20261024-96ce6caf';
+import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.15-20261024-fe444f3a';
+import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.15-20261024-fe444f3a';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, reviewList, flagList, hasSig, portNow, portOffset, offsetPicker, sigGate, gateCorrectionsFrom,
-  tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled, dropPhotos,
-} from './components.js?v=1.1.14-20261024-96ce6caf';
+  tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled, dropPhotos, reveal, idOf,
+} from './components.js?v=1.1.15-20261024-fe444f3a';
 
 const BASE_GRADES = ['VLSFO', 'HSFO', 'LSMGO', 'MDO'];
 const DO_GRADES = ['LSMGO', 'MGO', 'MDO', 'DMA', 'DMB', 'DMZ', 'ULSMGO'];
@@ -296,7 +296,7 @@ export function create(key) {
   }
   function damageRow(d, i) {
     const p = `cond.damages.${i}`;
-    return `<div class="deliv"><div class="card-h"><span class="lbl">Damage ${i + 1}${d.src ? ` <span class="opt">· from ${esc(d.srcLbl)}</span>` : ''}</span><button class="icon-btn" type="button" data-act="delDmg" data-i="${i}" aria-label="Remove damage ${i + 1}">${ICON.x}</button></div>
+    return `<div class="deliv" data-dmg="${i}"><div class="card-h"><span class="lbl">Damage ${i + 1}${d.src ? ` <span class="opt">· from ${esc(d.srcLbl)}</span>` : ''}</span><button class="icon-btn" type="button" data-act="delDmg" data-i="${i}" aria-label="Remove damage ${i + 1}">${ICON.x}</button></div>
       <div class="grid two">${selectField('Area', p + '.area', AREAS, { req: 1 })}${field('Exact location', p + '.loc', { req: 1, ph: 'E.g. Hold 2, port side, frame 112' })}</div>
       ${area('Description', p + '.desc', { ph: 'Type, size and extent. E.g. dent 40 × 25 cm, depth approx. 3 cm, no cracks.' })}
       ${OFF() ? seg('Compared with the on-hire report', p + '.cmp', CMP) : ''}
@@ -306,7 +306,7 @@ export function create(key) {
     const St = S().cond.steve;
     return `<section class="card" data-lockphase="cond"><div class="card-h"><h3>Outstanding stevedore damages</h3>${St.ans === 'yes' ? `<span class="pill warn">${St.rows.length} listed</span>` : ''}</div>
       ${seg('Any outstanding damage(s) occurred during the Charter and not yet repaired/rectified?', 'cond.steve.ans', [['none', 'No outstanding stevedore damages'], ['yes', 'Yes, list them']])}
-      ${St.ans === 'yes' ? St.rows.map((r, i) => { const p = `cond.steve.rows.${i}`; return `<div class="deliv"><div class="card-h"><span class="lbl">Stevedore damage ${i + 1}</span><button class="icon-btn" type="button" data-act="delStv" data-i="${i}" aria-label="Remove stevedore damage ${i + 1}">${ICON.x}</button></div>
+      ${St.ans === 'yes' ? St.rows.map((r, i) => { const p = `cond.steve.rows.${i}`; return `<div class="deliv" data-stv="${i}"><div class="card-h"><span class="lbl">Stevedore damage ${i + 1}</span><button class="icon-btn" type="button" data-act="delStv" data-i="${i}" aria-label="Remove stevedore damage ${i + 1}">${ICON.x}</button></div>
         <div class="grid two">${field('Hold / location', p + '.loc', { req: 1, ph: 'E.g. Hold 3, hatch coaming fwd stbd' })}</div>
         ${area('Description', p + '.desc', { ph: 'E.g. coaming top plate bent approx. 60 cm, grab damage.' })}
         ${photoBlock('stv_' + r.id, 'Photos')}</div>`; }).join('') + '<button class="btn add" type="button" data-act="addStv">+ Add stevedore damage</button>' : ''}
@@ -478,13 +478,14 @@ export function create(key) {
         const fam = famOf(b.dataset.grade);
         if (!freeTanks(s.VT, fam, usedTankKeys(s.rob.tanks, famOf))) toast(`All ${fam === 'do' ? 'gas oil / diesel' : 'fuel oil'} tanks of this vessel are already in this list. Use “Tank not on the list…” only for a tank that is missing.`);
         s.rob.tanks.push(T(b.dataset.grade)); fm.markSaved(); fm.render(false);
-        const sel = document.querySelector(`select[data-tanksel="rob:${s.rob.tanks.length - 1}"]`); if (sel) sel.focus(); return true;
+        const n = s.rob.tanks.length - 1; reveal(`[data-tank="rob:${n}"]`, `select[data-tanksel="rob:${n}"]`); return true;
       }
       case 'addHold': {
         const H = C.holds, used = new Set(H.map((h) => h.hold)); let n = 1; while (used.has(String(n)) && n < 9) n++;
         const full = used.has(String(n));
         H.forEach((h) => { h.open = false; }); H.push(newHold(full ? '' : String(n)));
-        return done(full ? 'Holds 1 to 9 are all in the list already. Check the hold numbers.' : `Hold ${n} added with ${HOLD_ITEMS().length} items`);
+        done(full ? 'Holds 1 to 9 are all in the list already. Check the hold numbers.' : `Hold ${n} added with ${HOLD_ITEMS().length} items`);
+        reveal(`[data-hold="${H.length - 1}"]`); return true;
       }
       case 'holdToggle': { const h = C.holds[+b.dataset.i]; h.open = !h.open; fm.render(false); return true; }
       case 'copyHold': {
@@ -501,13 +502,13 @@ export function create(key) {
         }, () => done('Hold removed'));
         return true;
       }
-      case 'addStv': C.steve.rows.push({ id: nid(), loc: '', desc: '' }); return done();
+      case 'addStv': C.steve.rows.push({ id: nid(), loc: '', desc: '' }); done(); reveal(`[data-stv="${C.steve.rows.length - 1}"]`, `#${idOf(`cond.steve.rows.${C.steve.rows.length - 1}.loc`)}`); return true;
       case 'delStv': {
         const r = C.steve.rows[+b.dataset.i]; if (!r) return true;
         removeRow(`Remove stevedore damage ${+b.dataset.i + 1}?`, rowFilled(r) || (s.photos['stv_' + r.id] || []).length, () => { const k = C.steve.rows.indexOf(r); if (k >= 0) C.steve.rows.splice(k, 1); dropPhotos('stv_' + r.id); }, () => done('Stevedore damage removed'));
         return true;
       }
-      case 'addDmg': C.damages.push({ id: nid(), src: '', srcLbl: '', area: '', loc: '', desc: '', cmp: '' }); return done();
+      case 'addDmg': C.damages.push({ id: nid(), src: '', srcLbl: '', area: '', loc: '', desc: '', cmp: '' }); done(); reveal(`[data-dmg="${C.damages.length - 1}"]`); return true;
       case 'delDmg': {
         const d = C.damages[+b.dataset.i]; if (!d) return true;
         removeRow(`Remove damage ${+b.dataset.i + 1}?`, rowFilled({ ...d, src: '', srcLbl: '' }) || (s.photos['dmg_' + d.id] || []).length, () => { const k = C.damages.indexOf(d); if (k >= 0) C.damages.splice(k, 1); dropPhotos('dmg_' + d.id); }, () => done('Damage removed'));

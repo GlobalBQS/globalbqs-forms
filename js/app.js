@@ -1,15 +1,15 @@
-export const __v = '1.1.14-20261024-96ce6caf';
+export const __v = '1.1.15-20261024-fe444f3a';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.14-20261024-96ce6caf';
-import * as db from './db.js?v=1.1.14-20261024-96ce6caf';
-import { call, ApiError, textFor } from './api.js?v=1.1.14-20261024-96ce6caf';
-import * as sync from './sync.js?v=1.1.14-20261024-96ce6caf';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.14-20261024-96ce6caf';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.14-20261024-96ce6caf';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.14-20261024-96ce6caf';
-import { mountForm } from './forms/engine.js?v=1.1.14-20261024-96ce6caf';
-import { imoOk } from './forms/calc.js?v=1.1.14-20261024-96ce6caf';
+import { ENV } from '../config.js?v=1.1.15-20261024-fe444f3a';
+import * as db from './db.js?v=1.1.15-20261024-fe444f3a';
+import { call, ApiError, textFor } from './api.js?v=1.1.15-20261024-fe444f3a';
+import * as sync from './sync.js?v=1.1.15-20261024-fe444f3a';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.15-20261024-fe444f3a';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.15-20261024-fe444f3a';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.15-20261024-fe444f3a';
+import { mountForm } from './forms/engine.js?v=1.1.15-20261024-fe444f3a';
+import { imoOk } from './forms/calc.js?v=1.1.15-20261024-fe444f3a';
 
 const app = $('#app');
 let cleanup = null;

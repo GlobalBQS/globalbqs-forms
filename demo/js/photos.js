@@ -1,4 +1,4 @@
-export const __v = '1.1.14-20261024-96ce6caf';
+export const __v = '1.1.15-20261024-fe444f3a';
 // Photos: read EXIF DateTimeOriginal BEFORE compressing (canvas drops EXIF), then shrink on the device
 // (max 2000 px, JPEG quality 0.8). The browser applies the EXIF orientation when drawing.
 

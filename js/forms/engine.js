@@ -1,11 +1,11 @@
-export const __v = '1.1.14-20261024-96ce6caf';
+export const __v = '1.1.15-20261024-fe444f3a';
 // Form runtime: renders one step at a time (step rail + Back/Next), live calculations, locks after signing,
 // signature pads, photos, timesheet drag & drop, and the generic actions shared by all forms.
 // A form module supplies: STEPS, PHASE, SIGLBL, R (step renderers), CALC, issues(), flags(), act(), title.
-import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.14-20261024-96ce6caf';
-import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled } from './components.js?v=1.1.14-20261024-96ce6caf';
-import { parseNum } from './calc.js?v=1.1.14-20261024-96ce6caf';
-import { BUILD } from '../../config.js?v=1.1.14-20261024-96ce6caf';
+import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.15-20261024-fe444f3a';
+import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled, reveal } from './components.js?v=1.1.15-20261024-fe444f3a';
+import { parseNum } from './calc.js?v=1.1.15-20261024-fe444f3a';
+import { BUILD } from '../../config.js?v=1.1.15-20261024-fe444f3a';
 const APP_VERSION = String(BUILD.version || 'dev').split('-')[0];
 
 export function mountForm(root, opts) {
@@ -208,7 +208,7 @@ export function mountForm(root, opts) {
       const k = arr.indexOf(t); if (k >= 0) arr.splice(k, 1);
       markSaved(); render(false); toast('Tank removed'); return;
     }
-    if (a === 'addLop') { S.lops.push(newLop(nextId())); markSaved(); render(false); return; }
+    if (a === 'addLop') { S.lops.push(newLop(nextId())); markSaved(); render(false); reveal(main.querySelector(`[data-act="delLop"][data-i="${S.lops.length - 1}"]`)?.closest('.deliv')); return; }
     if (a === 'delLop') {
       const l = S.lops[+b.dataset.i]; if (!l) return;
       await removeRow(`Remove Letter of Protest ${+b.dataset.i + 1}?`, rowFilled({ ...l, dir: '' }) || (S.photos['lop_' + l.id] || []).length, () => {

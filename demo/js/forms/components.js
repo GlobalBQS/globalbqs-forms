@@ -1,10 +1,10 @@
-export const __v = '1.1.14-20261024-96ce6caf';
+export const __v = '1.1.15-20261024-fe444f3a';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.14-20261024-96ce6caf';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.14-20261024-96ce6caf';
+import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.15-20261024-fe444f3a';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.15-20261024-fe444f3a';
 
 export const ctx = {
   removePhoto: null, // app hook: drop a photo file (not uploaded / not linked)
@@ -22,7 +22,7 @@ export function setPath(p, v) {
   const o = k.reduce((o, x) => { if (o[x] == null) o[x] = /^\d+$/.test(x) ? [] : {}; return o[x]; }, ctx.S);
   o[last] = v;
 }
-const idOf = (path) => 'f_' + path.replace(/\W/g, '_');
+export const idOf = (path) => 'f_' + path.replace(/\W/g, '_');
 
 // ---------- time in port LT ----------
 export const portOffset = () => ctx.S?.order?.utcOffset || ctx.S?.survey?.utcOffset || '';
@@ -303,4 +303,20 @@ export async function removeRow(title, filled, doRemove, done) {
     if (!v) return false;
   }
   doRemove(); if (done) done(); return true;
+}
+
+// ---------- show a newly added row ----------
+/** Scroll so the top of a new row sits just below the sticky app header (smooth), optionally focusing a field
+ *  without letting the browser jump. `block` / `focusEl`: element or selector, looked up after the render. */
+export function reveal(block, focusEl) {
+  const q = (x) => (typeof x === 'string' ? document.querySelector(x) : x);
+  requestAnimationFrame(() => {
+    const el = q(block); if (!el) return;
+    const f = q(focusEl);
+    if (f) { try { f.focus({ preventScroll: true }); } catch { /* old browser */ } }
+    const top = document.querySelector('.form-app .top');
+    const stick = top ? (parseFloat(getComputedStyle(top).top) || 0) + top.offsetHeight : 0;
+    const y = el.getBoundingClientRect().top + window.scrollY - stick - 10;
+    window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
+  });
 }
