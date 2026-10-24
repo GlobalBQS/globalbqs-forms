@@ -1,12 +1,13 @@
-export const __v = '1.1.13-20261024-16efc9c8';
+export const __v = '1.1.14-20261024-96ce6caf';
 // forms-api client. Errors are always {ok:false, code, message} from the server; the app shows its own
 // English texts per code (server messages can be Dutch). Network problems become code "offline".
-import { ENV } from '../config.js?v=1.1.13-20261024-16efc9c8';
+import { ENV } from '../config.js?v=1.1.14-20261024-96ce6caf';
 
 export const TEXT = {
   files_pending: 'Waiting for photos/signatures to upload (see the list below).',
   offline: 'No connection. Your work is saved on this device and will be sent when you are back in range.',
   invalid_link: 'This link is not valid (any more). Ask GlobalBQS operations for a new link.',
+  link_replaced: 'This link has been replaced by a newer one. Use the link in the latest e-mail from GlobalBQS for this job.',
   cancelled: 'This job was cancelled by GlobalBQS. Nothing more to do here.',
   rate_limited: 'Too many codes requested. Wait 15 minutes and try again.',
   invalid_code: 'That code is not correct.',

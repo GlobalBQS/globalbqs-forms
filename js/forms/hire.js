@@ -1,16 +1,16 @@
-export const __v = '1.1.13-20261024-16efc9c8';
+export const __v = '1.1.14-20261024-96ce6caf';
 // B221 (Bunker Quantity Survey), On-/Off-Hire Bunker, On-/Off-Hire B+C and On-/Off-Hire Condition.
 // One factory, four approved mockups ("as received"): the B+C mockup is the union of the bunker part
 // (vessel, fuel types & logbook, tank soundings, result) and the condition part (hull & main deck,
 // deck fittings & safety, cargo holds, engine room, damages & conclusion). Shared components from
 // components.js (tank rows, signatures with the "sign only when complete" rule, photos, LOP, review).
-import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.13-20261024-16efc9c8';
-import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.13-20261024-16efc9c8';
+import { esc, ICON, note, toast, offsetMin, deviceOffset, OFFSETS, fmtDate } from '../ui.js?v=1.1.14-20261024-96ce6caf';
+import { num, fx, sgn, r2, kgl, weigh, isInt } from './calc.js?v=1.1.14-20261024-96ce6caf';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, reviewList, flagList, hasSig, portNow, portOffset, offsetPicker, sigGate, gateCorrectionsFrom,
   tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled, dropPhotos,
-} from './components.js?v=1.1.13-20261024-16efc9c8';
+} from './components.js?v=1.1.14-20261024-96ce6caf';
 
 const BASE_GRADES = ['VLSFO', 'HSFO', 'LSMGO', 'MDO'];
 const DO_GRADES = ['LSMGO', 'MGO', 'MDO', 'DMA', 'DMB', 'DMZ', 'ULSMGO'];

@@ -1,15 +1,15 @@
-export const __v = '1.1.13-20261024-16efc9c8';
+export const __v = '1.1.14-20261024-96ce6caf';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.13-20261024-16efc9c8';
-import * as db from './db.js?v=1.1.13-20261024-16efc9c8';
-import { call, ApiError, textFor } from './api.js?v=1.1.13-20261024-16efc9c8';
-import * as sync from './sync.js?v=1.1.13-20261024-16efc9c8';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.13-20261024-16efc9c8';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.13-20261024-16efc9c8';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.13-20261024-16efc9c8';
-import { mountForm } from './forms/engine.js?v=1.1.13-20261024-16efc9c8';
-import { imoOk } from './forms/calc.js?v=1.1.13-20261024-16efc9c8';
+import { ENV } from '../config.js?v=1.1.14-20261024-96ce6caf';
+import * as db from './db.js?v=1.1.14-20261024-96ce6caf';
+import { call, ApiError, textFor } from './api.js?v=1.1.14-20261024-96ce6caf';
+import * as sync from './sync.js?v=1.1.14-20261024-96ce6caf';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.14-20261024-96ce6caf';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.14-20261024-96ce6caf';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.14-20261024-96ce6caf';
+import { mountForm } from './forms/engine.js?v=1.1.14-20261024-96ce6caf';
+import { imoOk } from './forms/calc.js?v=1.1.14-20261024-96ce6caf';
 
 const app = $('#app');
 let cleanup = null;
@@ -98,19 +98,28 @@ V.jobs = async () => {
   const notReady = jobs.filter((j) => !j.prefill && !j.read_only).length;
   screen(`${bar('My jobs', 'Jobs opened on this device')}
   <div class="content">
+    <div class="card newjob"><h3>Open a new job</h3>
+      <ol class="howto small"><li>In the e-mail from GlobalBQS, press and hold the <b>Open survey form</b> button and choose <b>Copy link</b>.</li><li>Come back here and tap <b>Paste link</b>.</li></ol>
+      <button class="btn primary block" type="button" id="pasteBtn">Paste link</button>
+      <div class="fix"><label for="pasteLink">Or paste / type the link here</label><input id="pasteLink" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://forms.globalbqs.com/j/…"></div>
+      <button class="btn ghost block" type="button" id="openLinkBtn">Open job</button></div>
     ${db.memoryOnly ? note('bad', '<b>This browser does not allow the app to store data</b> (private mode?). Your work is lost when you close it. Use a normal window or the home-screen app.') : ''}
+    ${jobs.length ? '<h3 style="margin:4px 0 0">My jobs</h3>' : ''}
     ${jobs.length ? (notReady ? note('warn', `<b>${notReady} job${notReady > 1 ? 's' : ''} not ready offline yet.</b> Open ${notReady > 1 ? 'them' : 'it'} while you have signal.`) : note('ok', 'All jobs are on this device. You can go on board without signal.')) : note('info', 'No jobs on this device yet. Open the job link from the e-mail on this device, or paste it below.')}
     ${jobs.map((j) => `<button class="jobcard" type="button" data-go="#/job/${j.job_id}">
       <div class="row"><span class="mono small">${esc(j.summary?.gbqs_reference || '')}</span>${statusPill(j, obs[j.job_id])}</div>
       <span class="vsl">${esc(j.summary?.vessel_name || 'Job')}</span><span class="muted">${esc(j.summary?.survey_type_label || '')} · ${esc(j.summary?.port || '')}${j.summary?.eta ? ' · ETA ' + esc(j.summary.eta) : ''}</span></button>`).join('')}
-    <div class="card"><h3>Open a job link</h3><p class="muted small" style="margin:0">On iPhone the link from the e-mail opens in Safari. In the home-screen app, paste the link here once.</p>
-      <div class="fix"><label for="pasteLink">Job link from the e-mail</label><input id="pasteLink" autocomplete="off" placeholder="https://forms.globalbqs.com/j/…"></div>
-      <div class="row" style="gap:8px;flex-wrap:nowrap"><button class="btn ghost" type="button" id="pasteBtn">Paste</button><button class="btn primary" type="button" id="openLinkBtn">Open job</button></div></div>
     <p class="muted small" style="margin:0;text-align:center">GlobalBQS Forms ${esc(ENV.version)}${ENV.isDemo ? ' · DEMO' : ''}</p>
   </div>`);
-  const open = () => { const m = TOKEN_RE.exec($('#pasteLink').value || ''); if (!m) { toast('That is not a GlobalBQS job link.'); return; } location.hash = '#/j/' + m[0].toLowerCase(); };
+  const open = () => { const m = TOKEN_RE.exec($('#pasteLink').value || ''); if (!m) { toast('That is not a GlobalBQS job link. Copy the link of the “Open survey form” button in the e-mail.'); return; } location.hash = '#/j/' + m[0].toLowerCase(); };
   $('#openLinkBtn').onclick = open;
-  $('#pasteBtn').onclick = async () => { try { $('#pasteLink').value = await navigator.clipboard.readText(); open(); } catch { toast('Paste the link into the field (long-press → Paste).'); } };
+  $('#pasteLink').addEventListener('keydown', (e) => { if (e.key === 'Enter') open(); });
+  $('#pasteBtn').onclick = async () => {
+    let txt = '';
+    try { txt = await navigator.clipboard.readText(); } catch { /* not allowed: use the field */ }
+    if (txt && TOKEN_RE.test(txt)) { $('#pasteLink').value = txt; open(); return; }
+    const f = $('#pasteLink'); f.focus(); toast(txt ? 'The copied text is not a job link. Copy the link from the e-mail again.' : 'Press and hold in the field and choose Paste.');
+  };
 };
 
 V.link = async (token) => {
@@ -125,10 +134,24 @@ V.link = async (token) => {
   let r;
   try { r = await call('/job', { query: { token }, session: local?.session }); } catch (e) {
     if (e.code === 'offline' && local) { location.replace('#/job/' + local.job_id); return; }
+    if ((e.code === 'link_replaced' || e.code === 'invalid_link') && local && local.session) {
+      // the job stays usable on this device (signed in); only this link is old
+      await db.put('jobs', { ...local, link_replaced: true });
+      location.replace('#/job/' + local.job_id);
+      setTimeout(() => toast(e.code === 'link_replaced' ? 'This link was replaced by a newer one. The job opens from this device.' : 'This link is no longer valid. The job opens from this device.'), 300);
+      return;
+    }
     if (e.code === 'cancelled' && local) await db.put('jobs', { ...local, read_only: true, read_only_reason: 'cancelled' });
-    errorScreen(e.code === 'cancelled' ? 'Job cancelled' : e.code === 'invalid_link' ? 'Link not valid' : 'Could not open the job', textFor(e.code),
+    errorScreen(e.code === 'cancelled' ? 'Job cancelled' : e.code === 'link_replaced' ? 'Link replaced' : e.code === 'invalid_link' ? 'Link not valid' : 'Could not open the job', textFor(e.code),
       e.retryable ? '<button class="btn primary block" type="button" data-reload>Try again</button>' : '');
     return;
+  }
+  // a newer link for a job that is already signed in on this device: no new code needed
+  if (r.needs_sign_in && r.job && !local) {
+    const same = await db.get('jobs', r.job.id);
+    if (same && same.session) {
+      try { const r2 = await call('/job', { query: { token }, session: same.session }); if (!r2.needs_sign_in && r2.prefill) { r = r2; } } catch { /* sign in as usual */ }
+    }
   }
   if (!r.needs_sign_in && r.prefill) {
     const job = await storeJobFromOpen(token, r, null);
@@ -146,6 +169,19 @@ V.link = async (token) => {
   else location.replace('#/signin/' + token);
 };
 
+/** in the browser (not the home-screen app) on iPhone/iPad: the e-mail link cannot open the installed app */
+function installedHint(token) {
+  if (isStandalone() || !isIOS()) return '';
+  return `<div class="card"><p style="margin:0"><b>Already have the GlobalBQS app on your home screen?</b> Copy this link, open the GlobalBQS app and tap <b>Open a new job</b> → <b>Paste link</b>.</p>
+    <button class="btn ghost block" type="button" data-copylink="${token}">Copy link</button></div>`;
+}
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-copylink]'); if (!b) return;
+  const url = location.href.split('#')[0].replace(/[^/]*$/, '') + 'j/' + b.dataset.copylink;
+  try { await navigator.clipboard.writeText(url); toast('Link copied. Open the GlobalBQS app and tap Open a new job → Paste link.'); }
+  catch { modal('Copy this link', `<p class="mono small" style="word-break:break-all;user-select:all">${esc(url)}</p>`); }
+});
+
 V.install = async (token) => {
   const p = pending.get(token);
   if (!p) { location.replace('#/j/' + token); return; }
@@ -155,6 +191,7 @@ V.install = async (token) => {
     repaint(`${bar('Welcome' + (p.summary?.vessel_name ? '' : ''), 'Install once on this device (about 30 seconds)')}
     <div class="content">
       ${firstRun(1)}
+      ${installedHint(token)}
       <div class="card"><dl class="kv"><dt>Job</dt><dd class="mono">${esc(p.summary?.gbqs_reference || '')}</dd><dt>Survey</dt><dd>${esc(p.summary?.survey_type_label || '')}</dd><dt>Vessel</dt><dd>${esc(p.summary?.vessel_name || '')}</dd><dt>Port</dt><dd>${esc(p.summary?.port || '')}</dd>${p.summary?.eta ? `<dt>ETA</dt><dd>${esc(p.summary.eta)}</dd>` : ''}</dl></div>
       ${note('info', 'Put the app on your home screen first. Then it opens without signal and keeps your work, also when you close it.')}
       <div class="tabs" role="group" aria-label="Device type"><button type="button" data-tab="ios" aria-pressed="${tab === 'ios'}">iPhone / iPad</button><button type="button" data-tab="android" aria-pressed="${tab === 'android'}">Android</button></div>
@@ -191,6 +228,7 @@ V.signin = async (token) => {
     repaint(`${bar('Sign in on this device', 'Step 2 of 2 · confirm it is you')}
     <div class="content">
       ${firstRun(2)}
+      ${installedHint(token)}
       <div class="card"><dl class="kv"><dt>Job</dt><dd class="mono">${esc(p.summary?.gbqs_reference || '')}</dd><dt>Vessel</dt><dd>${esc(p.summary?.vessel_name || '')}</dd></dl></div>
       <div class="card"><p style="margin:0">We e-mail you a 6-digit code to confirm it's you. You need it once per job on this device.</p><p class="muted small" style="margin:0">Code goes to <b>${esc(p.email || p.summary?.surveyor_email_masked || 'your e-mail address')}</b>.</p>
         ${p.codeSent ? `<p class="muted small" style="margin:0">Code sent. Valid until ${esc(new Date(p.expires).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))} (device time).</p>` : ''}
@@ -307,6 +345,7 @@ V.job = async (id) => {
   <div class="content">
     <div class="row">${statusPill(job, ob)}<span class="muted small">${job.synced_at ? 'Last synced ' + esc(timeAgo(job.synced_at)) : 'Not synced yet'}</span></div>
     ${roBanner(job)}
+    ${job.link_replaced && !job.read_only ? note('warn', '<b>A newer link was sent for this job.</b> You can carry on here; your work is saved and synchronised. To refresh the job details (vessel, port, instructions), open the link in the latest e-mail once.') : ''}
     ${!job.read_only && !['queued', 'submitted'].includes(job.status) && draft && draft.state && (draft.state.audit || []).some((a) => REOPEN_RE.test(a.reason || '')) ? note('info', '<b>Reopened for correction.</b> Your previous entries and photos are loaded. Correct what is needed; the signatures must be collected again before you submit.') : ''}
     ${!supported ? note('warn', 'This survey type is not available in this app version yet. Use the form link from GlobalBQS operations.') : ''}
     <div class="card"><dl class="kv"><dt>IMO</dt><dd class="mono">${esc(pf.vessel?.imo || '—')}</dd><dt>Place</dt><dd>${esc(port.place || s.port || '—')}</dd><dt>ETA</dt><dd>${esc(sch.eta || s.eta || '—')}</dd><dt>ETB</dt><dd>${esc(sch.etb || '—')}</dd><dt>Grades</dt><dd>${esc(grades)}</dd><dt>Supplier</dt><dd>${esc(nom.supplier_name || '—')}</dd><dt>Agent</dt><dd>${esc(pf.parties?.agent || '—')}</dd>
@@ -442,11 +481,15 @@ const serverDraftSeen = new Map();
 async function refreshPrefill(job) {
   if (!navigator.onLine || !job.session || job.read_only) return null;
   try {
-    const r = await call('/job', { query: { token: job.token }, session: job.session });
+    let r;
+    try { r = await call('/job', { query: { token: job.token }, session: job.session }); } catch (e) {
+      if (e.code === 'link_replaced' || e.code === 'invalid_link') await db.update('jobs', job.job_id, (j) => (j ? { ...j, link_replaced: e.code } : undefined));
+      return null;
+    }
     if (!r || r.needs_sign_in || !r.prefill) return null;
     const cur = await db.get('jobs', job.job_id);
     if (!cur) return null;
-    const j = { ...cur, prefill: r.prefill, summary: r.summary || cur.summary, job_status: r.job?.status || cur.job_status, prefill_at: new Date().toISOString() };
+    const j = { ...cur, link_replaced: false, prefill: r.prefill, summary: r.summary || cur.summary, job_status: r.job?.status || cur.job_status, prefill_at: new Date().toISOString() };
     if (!['queued', 'submitted'].includes(j.status)) await adoptServerDraft(j, r.draft);
     // what the server holds right now (used only for this page view: offer "Load saved version" when it differs)
     serverDraftSeen.set(j.job_id, r.draft && r.draft.payload && r.draft.payload.state ? { rev: r.draft.rev || 0, filled: sync.filledCount(r.draft.payload.state) } : null);
