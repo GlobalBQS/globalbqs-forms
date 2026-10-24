@@ -1,15 +1,15 @@
-export const __v = '1.1.15-20261024-fe444f3a';
+export const __v = '1.1.16-20261024-683e6469';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.15-20261024-fe444f3a';
-import * as db from './db.js?v=1.1.15-20261024-fe444f3a';
-import { call, ApiError, textFor } from './api.js?v=1.1.15-20261024-fe444f3a';
-import * as sync from './sync.js?v=1.1.15-20261024-fe444f3a';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.15-20261024-fe444f3a';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.15-20261024-fe444f3a';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.15-20261024-fe444f3a';
-import { mountForm } from './forms/engine.js?v=1.1.15-20261024-fe444f3a';
-import { imoOk } from './forms/calc.js?v=1.1.15-20261024-fe444f3a';
+import { ENV } from '../config.js?v=1.1.16-20261024-683e6469';
+import * as db from './db.js?v=1.1.16-20261024-683e6469';
+import { call, ApiError, textFor } from './api.js?v=1.1.16-20261024-683e6469';
+import * as sync from './sync.js?v=1.1.16-20261024-683e6469';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.16-20261024-683e6469';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.16-20261024-683e6469';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.16-20261024-683e6469';
+import { mountForm } from './forms/engine.js?v=1.1.16-20261024-683e6469';
+import { imoOk } from './forms/calc.js?v=1.1.16-20261024-683e6469';
 
 const app = $('#app');
 let cleanup = null;
@@ -345,6 +345,7 @@ V.job = async (id) => {
   <div class="content">
     <div class="row">${statusPill(job, ob)}<span class="muted small">${job.synced_at ? 'Last synced ' + esc(timeAgo(job.synced_at)) : 'Not synced yet'}</span></div>
     ${roBanner(job)}
+    ${job.status === 'submitted' ? reviewNote(job.review || 'processing') : ''}
     ${job.link_replaced && !job.read_only ? note('warn', '<b>A newer link was sent for this job.</b> You can carry on here; your work is saved and synchronised. To refresh the job details (vessel, port, instructions), open the link in the latest e-mail once.') : ''}
     ${!job.read_only && !['queued', 'submitted'].includes(job.status) && draft && draft.state && (draft.state.audit || []).some((a) => REOPEN_RE.test(a.reason || '')) ? note('info', '<b>Reopened for correction.</b> Your previous entries and photos are loaded. Correct what is needed; the signatures must be collected again before you submit.') : ''}
     ${!supported ? note('warn', 'This survey type is not available in this app version yet. Use the form link from GlobalBQS operations.') : ''}
@@ -372,6 +373,7 @@ V.job = async (id) => {
       location.hash = '#/job/' + id + (d && d.state && d.state.gate && d.state.gate.done ? '/form' : '/check');
     } catch (e) { toast(textFor(e.code)); ls.disabled = false; }
   };
+  if (job.status === 'submitted') refreshReview(id).then((changed) => { if (changed && location.hash === '#/job/' + id) route(); });
   const rm = $('#removeJob');
   if (rm) rm.onclick = async () => {
     const v = await modal('Remove this job from this device?', '<p>The survey stays with GlobalBQS. Only the copy on this device is removed.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove', value: 'rm', kind: 'danger' }]);
@@ -619,6 +621,29 @@ V.form = async (id) => {
   } else if (navigator.onLine && !job.read_only) sync.pushDraft(id);
 };
 
+// ---------- after submit: where the report stands ----------
+const REVIEW_ORDER = ['processing', 'correction', 'resubmitted', 'awaiting_confirmation', 'approved', 'issued'];
+const REVIEW_TEXT = {
+  processing: ['info', '<b>Submitted. Next step:</b> we will e-mail you the draft report within a few minutes. Please check it and tap <b>Approve</b>, or request a correction. The report is issued to the client only after your confirmation.'],
+  awaiting_confirmation: ['warn', '<b>Draft report sent – awaiting your confirmation.</b> Check your e-mail and tap <b>Approve</b>, or request a correction. The report is issued to the client only after your confirmation.'],
+  correction: ['info', '<b>Correction requested.</b> GlobalBQS is handling it. If the form needs to be changed, you receive an e-mail with a new link.'],
+  resubmitted: ['info', '<b>Corrected survey received.</b> We will e-mail you the updated draft report to confirm.'],
+  approved: ['ok', '<b>Confirmed – GlobalBQS will issue the report.</b> Thank you.'],
+  issued: ['ok', '<b>Report issued to the client.</b> Thank you.'],
+};
+const reviewNote = (stg) => { const t = REVIEW_TEXT[stg] || REVIEW_TEXT.processing; return note(t[0], t[1]); };
+/** ask GlobalBQS where the report stands (signed-in device, online); true when it changed */
+async function refreshReview(id) {
+  const job = await db.get('jobs', id);
+  if (!job || !job.session || !job.token || !navigator.onLine || !(job.status === 'submitted' || job.job_status === 'submitted')) return false;
+  try {
+    const r = await call('/job', { query: { token: job.token }, session: job.session });
+    const stg = r && r.review && r.review.stage; if (!stg || stg === job.review) return false;
+    await db.update('jobs', id, (j) => (j ? { ...j, review: stg, review_at: new Date().toISOString() } : undefined));
+    return true;
+  } catch { return false; }
+}
+
 // ---------- status ----------
 V.status = async (id) => {
   const job = await db.get('jobs', id);
@@ -628,21 +653,24 @@ V.status = async (id) => {
     const files = (await db.byIndex('files', 'job_id', id)).filter((f) => !ob || (ob.file_ids || []).includes(f.id));
     const sent = ob && ob.status === 'sent', blocked = ob && ob.status === 'blocked';
     const s = j.summary || {};
+    const done = sent || j.status === 'submitted', stg = j.review || (done ? 'processing' : null), at = (k) => REVIEW_ORDER.indexOf(stg) >= REVIEW_ORDER.indexOf(k);
     const steps = [
-      ['Reviewed and signed by you', 'You reviewed the report and signed it as the appointed surveyor. Stored on this device.', true],
-      ['Submitted', sent ? `Received ${ob.sent_at ? 'at ' + esc(new Date(ob.sent_at).toLocaleString()) : ''}. Submission ID <span class="mono">${esc(ob.result?.submission_id || '—')}</span>.` : blocked ? esc(textFor(ob.last_error)) : navigator.onLine ? 'Sending… keep the app open.' : 'Waiting for signal. Keep the app on your device; it sends by itself. Opening the app ashore speeds it up.', sent],
-      ['Under review by GlobalBQS', 'Ops checks the survey and recalculates the figures. If something is unclear, ops contacts you.', false],
-      ['Report issued', 'GlobalBQS issues the report to the client.', false],
+      ['Reviewed and signed by you', 'You reviewed the survey and signed it as the appointed surveyor. Stored on this device.', true],
+      ['Submitted', sent ? `Received ${ob.sent_at ? 'at ' + esc(new Date(ob.sent_at).toLocaleString()) : ''}. Submission ID <span class="mono">${esc(ob.result?.submission_id || '—')}</span>.` : done ? 'Received by GlobalBQS.' : blocked ? esc(textFor(ob.last_error)) : navigator.onLine ? 'Sending… keep the app open.' : 'Waiting for signal. Keep the app on your device; it sends by itself. Opening the app ashore speeds it up.', done],
+      ['Draft report e-mailed to you', stg === 'correction' ? 'You requested a correction. GlobalBQS is handling it.' : 'We e-mail you the draft report within a few minutes. Check it and tap <b>Approve</b>, or request a correction.', done && at('awaiting_confirmation')],
+      ['Confirmed by you', 'The report is issued to the client only after your confirmation.', done && at('approved')],
+      ['Report issued to the client', 'GlobalBQS issues the report to the client.', done && at('issued')],
     ];
     const now = steps.findIndex((x) => !x[2]);
     const pill = (f) => (f.status === 'uploaded' ? '<span class="pill ok">Uploaded</span>' : f.status === 'uploading' ? '<span class="pill info">Uploading</span>' : f.status === 'lost' ? '<span class="pill bad">Not sent</span>' : f.status === 'error' ? `<span class="pill warn" title="${esc(f.error || '')}">Retry ${f.attempts || 1}</span>` : '<span class="pill warn">Waiting</span>');
     const failing = files.filter((f) => f.status === 'error' && (f.attempts || 0) >= 2);
     repaint(`${bar(sent ? 'Survey submitted' : blocked ? 'Not sent' : 'Waiting to send', `${esc(s.gbqs_reference || '')} · ${esc(s.vessel_name || '')}`, '#/job/' + id)}
     <div class="content">
+      ${done ? reviewNote(stg) : ''}
       ${sent ? note('ok', `<b>Received by GlobalBQS.</b> Submission ID <span class="mono">${esc(ob.result?.submission_id || '')}</span>.${ob.result?.duplicate ? ' (already received earlier)' : ''}`)
         : blocked ? note('bad', `<b>${esc(textFor(ob.last_error))}</b>`)
         : note('warn', '<b>Not sent yet.</b> Everything is safe on this device. Do not delete the app or clear the browser until it shows Submitted.')}
-      ${!ob ? note('info', 'No submission on this device.') : ''}
+      ${!ob && !done ? note('info', 'No submission on this device.') : ''}
       <div class="card"><ol class="tl">${steps.map((x, i) => `<li class="${x[2] ? 'done' : i === now ? 'now' : ''}"><span class="d">${x[2] ? '✓' : ''}</span><div><b>${x[0]}</b><span>${x[1]}</span></div></li>`).join('')}</ol></div>
       ${ob ? `<div class="card"><div class="row"><h3>Outbox</h3>${sent ? '<span class="pill ok">All uploaded</span>' : `<span class="pill warn">${ob.status === 'sending' ? 'Sending' : 'Waiting'}</span>`}</div>
         <dl class="kv"><dt>Client reference</dt><dd class="mono small">${esc(ob.client_submission_id)}</dd><dt>Form version</dt><dd class="mono">${esc(ob.payload?.form_version || '')}</dd>${ob.last_error && !sent ? `<dt>Last attempt</dt><dd>${esc(textFor(ob.last_error))}</dd>` : ''}</dl>
@@ -656,6 +684,7 @@ V.status = async (id) => {
     const sn = $('#sendNow'); if (sn) sn.onclick = () => { sn.disabled = true; sync.processOutbox(id, { force: true }); };
   };
   await render();
+  refreshReview(id).then((changed) => { if (changed) render(); });
   let t = null;
   const re = (e) => { if (e.detail && e.detail.jobId && e.detail.jobId !== id) return; clearTimeout(t); t = setTimeout(render, 120); };
   sync.bus.addEventListener('outbox', re); sync.bus.addEventListener('files', re); sync.bus.addEventListener('net', re);

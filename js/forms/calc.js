@@ -1,4 +1,4 @@
-export const __v = '1.1.15-20261024-fe444f3a';
+export const __v = '1.1.16-20261024-683e6469';
 // Calculation preview (identical to the approved mockups). The server ALWAYS recalculates on submission
 // with the exact ASTM D1250-04 implementation (gbqs_vcf_54b_2004); these figures are only a preview.
 
