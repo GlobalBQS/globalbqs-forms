@@ -1,13 +1,13 @@
-export const __v = '1.1.12-20261023-6b99a1aa';
+export const __v = '1.1.13-20261024-16efc9c8';
 // Bunker Delivery Survey (form_key bunker_delivery_survey) - port of the approved mockup "as received",
 // with prefill from the job, and the submit payload in contract gbqs.forms/1.
-import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.12-20261023-6b99a1aa';
-import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.12-20261023-6b99a1aa';
+import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.13-20261024-16efc9c8';
+import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.13-20261024-16efc9c8';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker, sigGate,
   tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled,
-} from './components.js?v=1.1.12-20261023-6b99a1aa';
+} from './components.js?v=1.1.13-20261024-16efc9c8';
 
 export const key = 'bunker_delivery_survey';
 export const title = 'Bunker Delivery Survey';

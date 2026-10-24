@@ -1,15 +1,15 @@
-export const __v = '1.1.12-20261023-6b99a1aa';
+export const __v = '1.1.13-20261024-16efc9c8';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.12-20261023-6b99a1aa';
-import * as db from './db.js?v=1.1.12-20261023-6b99a1aa';
-import { call, ApiError, textFor } from './api.js?v=1.1.12-20261023-6b99a1aa';
-import * as sync from './sync.js?v=1.1.12-20261023-6b99a1aa';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.12-20261023-6b99a1aa';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.12-20261023-6b99a1aa';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.12-20261023-6b99a1aa';
-import { mountForm } from './forms/engine.js?v=1.1.12-20261023-6b99a1aa';
-import { imoOk } from './forms/calc.js?v=1.1.12-20261023-6b99a1aa';
+import { ENV } from '../config.js?v=1.1.13-20261024-16efc9c8';
+import * as db from './db.js?v=1.1.13-20261024-16efc9c8';
+import { call, ApiError, textFor } from './api.js?v=1.1.13-20261024-16efc9c8';
+import * as sync from './sync.js?v=1.1.13-20261024-16efc9c8';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.13-20261024-16efc9c8';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.13-20261024-16efc9c8';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.13-20261024-16efc9c8';
+import { mountForm } from './forms/engine.js?v=1.1.13-20261024-16efc9c8';
+import { imoOk } from './forms/calc.js?v=1.1.13-20261024-16efc9c8';
 
 const app = $('#app');
 let cleanup = null;
@@ -288,11 +288,18 @@ function roBanner(job) {
 V.job = async (id) => {
   let job = await db.get('jobs', id);
   if (!job) { location.replace('#/'); return; }
-  job = (await refreshPrefill(job)) || job;
+  serverDraftSeen.delete(id);
+  const fresh = await refreshPrefill(job);
+  job = fresh || job;
   const ob = await db.get('outbox', id);
   const s = job.summary || {}, pf = job.prefill || {};
   const draft = await db.get('drafts', id);
   const started = !!(draft && draft.state && draft.state.gate && draft.state.gate.done);
+  // "Load saved version from GlobalBQS" only when, just now (online), the server had a draft that differs from this device:
+  // a newer rev than this device synced, or more filled in than the local copy
+  const sd = fresh && navigator.onLine ? serverDraftSeen.get(id) : null;
+  const showLoad = !!(sd && !job.read_only && job.session && !['queued', 'submitted'].includes(job.status) && isSupported(job.form_key)
+    && (sd.rev > (job.server_rev || 0) || !(draft && draft.state) || sync.filledCount(draft.state) < sd.filled));
   const port = pf.port || {}, sch = pf.schedule || {}, nom = pf.nomination || {};
   const grades = (nom.deliveries || []).map((d) => `${d.grade}${d.nominated_mt != null ? ' ' + d.nominated_mt + ' MT' : ''}`).join(' · ') || nom.ordered_quantities || '—';
   const supported = isSupported(job.form_key);
@@ -309,7 +316,7 @@ V.job = async (id) => {
     ${!job.prefill ? note('warn', 'This job is not ready offline yet. Open it once with signal.') : ''}
     ${['queued', 'submitted'].includes(job.status) ? '<button class="btn primary block" type="button" data-go="#/job/' + id + '/status">Show status</button>'
       : supported && job.prefill ? `<button class="btn primary block" type="button" data-go="#/job/${id}/${started ? 'form' : 'check'}">${job.read_only ? 'View survey (read-only)' : started ? 'Continue survey' : 'I am on board: start'}</button>` : ''}
-    ${!job.read_only && job.session && !['queued', 'submitted'].includes(job.status) && supported ? `<button class="btn ghost block" type="button" id="loadServer">Load saved version from GlobalBQS</button><p class="muted small" style="margin:0;text-align:center">Replaces the copy on this device with the version last saved on GlobalBQS (this device's copy is kept as a backup).</p>` : ''}
+    ${showLoad ? `<button class="btn ghost block" type="button" id="loadServer">Load saved version from GlobalBQS</button><p class="muted small" style="margin:0;text-align:center">Replaces the copy on this device with the version last saved on GlobalBQS (this device's copy is kept as a backup).</p>` : ''}
     ${job.status === 'submitted' || job.read_only_reason === 'cancelled' ? '<button class="btn ghost block" type="button" id="removeJob">Remove from this device</button>' : ''}
   </div>`);
   const ls = $('#loadServer');
@@ -430,6 +437,7 @@ function refreshOrder(S, pf) {
   const tol = pf.tolerance_pct ?? pf.client?.delivery_tolerance_pct; if (tol != null) o.tol = tol;
   o.charter = pf.charter ?? null; o.onHire = pf.on_hire_survey ?? null;
 }
+const serverDraftSeen = new Map();
 /** refresh prefill (and summary) in the background whenever a job is opened with signal */
 async function refreshPrefill(job) {
   if (!navigator.onLine || !job.session || job.read_only) return null;
@@ -440,6 +448,8 @@ async function refreshPrefill(job) {
     if (!cur) return null;
     const j = { ...cur, prefill: r.prefill, summary: r.summary || cur.summary, job_status: r.job?.status || cur.job_status, prefill_at: new Date().toISOString() };
     if (!['queued', 'submitted'].includes(j.status)) await adoptServerDraft(j, r.draft);
+    // what the server holds right now (used only for this page view: offer "Load saved version" when it differs)
+    serverDraftSeen.set(j.job_id, r.draft && r.draft.payload && r.draft.payload.state ? { rev: r.draft.rev || 0, filled: sync.filledCount(r.draft.payload.state) } : null);
     await db.put('jobs', j);
     return j;
   } catch { return null; }
