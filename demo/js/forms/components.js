@@ -1,10 +1,10 @@
-export const __v = '1.1.16-20261024-683e6469';
+export const __v = '1.1.17-20261027-d93d7565';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.16-20261024-683e6469';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.16-20261024-683e6469';
+import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.17-20261027-d93d7565';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.17-20261027-d93d7565';
 
 export const ctx = {
   removePhoto: null, // app hook: drop a photo file (not uploaded / not linked)
@@ -229,13 +229,14 @@ export function sortTs(ev) {
   dated.sort((a, b) => evt(a) - evt(b)); pos.forEach((p, k) => { ev[p] = dated[k]; });
 }
 export function moveTs(ev, from, to) { if (to < 0 || to >= ev.length || from === to) return; const [x] = ev.splice(from, 1); ev.splice(to, 0, x); }
-export function tsRows(events) {
+/** chip(e) -> optional text shown before the label (e.g. the delivery an event belongs to) */
+export function tsRows(events, chip) {
   const N = events.length;
-  return events.map((e, i) => `<div class="ts-row${e.t && e.d ? ' set' : ''}" data-tsrow="${i}"><button class="drag" type="button" data-drag="${i}" aria-label="Drag to reorder: ${esc(e.label)}" title="Drag to reorder">⋮⋮</button>
-      <div class="ts-main"><div class="ts-head"><label class="ts-lbl${e.key ? ' key' : ''}" for="tsd_${i}">${esc(e.label)}</label>
+  return events.map((e, i) => { const c = chip ? chip(e) : null; return `<div class="ts-row${e.t && e.d ? ' set' : ''}" data-tsrow="${i}"><button class="drag" type="button" data-drag="${i}" aria-label="Drag to reorder: ${esc(e.label)}" title="Drag to reorder">⋮⋮</button>
+      <div class="ts-main"><div class="ts-head"><label class="ts-lbl${e.key ? ' key' : ''}" for="tsd_${i}">${c ? `<span class="gchip">${esc(c)}</span> ` : ''}${esc(e.label)}</label>
         <button class="mini" type="button" data-act="tsUp" data-i="${i}" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button><button class="mini" type="button" data-act="tsDown" data-i="${i}" aria-label="Move down" ${i === N - 1 ? 'disabled' : ''}>↓</button>${e.custom ? `<button class="mini del" type="button" data-act="tsDel" data-i="${i}" aria-label="Remove ${esc(e.label)}">×</button>` : ''}</div>
       <div class="ts-ctl"><div class="dt"><input id="tsd_${i}" type="date" data-bind="ts.events.${i}.d" value="${esc(e.d)}" aria-label="Date, ${esc(e.label)}"><input id="ts_${i}" type="time" data-bind="ts.events.${i}.t" value="${esc(e.t)}" aria-label="Time LT, ${esc(e.label)}"></div><span class="lt">LT</span><button class="btn ghost small" type="button" data-act="now" data-i="${i}">Now</button></div>
-      <div class="ts-warn" data-calc="tsw:${i}"></div></div></div>`).join('');
+      <div class="ts-warn" data-calc="tsw:${i}"></div></div></div>`; }).join('');
 }
 export function tsWarn(events, i) {
   const e = events[i];
