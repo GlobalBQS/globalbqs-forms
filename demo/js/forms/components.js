@@ -1,10 +1,10 @@
-export const __v = '1.1.17-20261027-d93d7565';
+export const __v = '1.1.18-20261028-260f712d';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.17-20261027-d93d7565';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.17-20261027-d93d7565';
+import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.18-20261028-260f712d';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.18-20261028-260f712d';
 
 export const ctx = {
   removePhoto: null, // app hook: drop a photo file (not uploaded / not linked)
@@ -229,12 +229,13 @@ export function sortTs(ev) {
   dated.sort((a, b) => evt(a) - evt(b)); pos.forEach((p, k) => { ev[p] = dated[k]; });
 }
 export function moveTs(ev, from, to) { if (to < 0 || to >= ev.length || from === to) return; const [x] = ev.splice(from, 1); ev.splice(to, 0, x); }
-/** chip(e) -> optional text shown before the label (e.g. the delivery an event belongs to) */
-export function tsRows(events, chip) {
-  const N = events.length;
-  return events.map((e, i) => { const c = chip ? chip(e) : null; return `<div class="ts-row${e.t && e.d ? ' set' : ''}" data-tsrow="${i}"><button class="drag" type="button" data-drag="${i}" aria-label="Drag to reorder: ${esc(e.label)}" title="Drag to reorder">⋮⋮</button>
+/** chip(e) -> optional text shown before the label (e.g. the delivery an event belongs to);
+ *  show(e) -> false hides the row (timesheet tabs). Row indices stay the real array index. */
+export function tsRows(events, chip, show) {
+  const vis = []; events.forEach((e, i) => { if (!show || show(e)) vis.push(i); });
+  return vis.map((i, k) => { const e = events[i], c = chip ? chip(e) : null, up = k > 0 ? vis[k - 1] : null, dn = k < vis.length - 1 ? vis[k + 1] : null; return `<div class="ts-row${e.t && e.d ? ' set' : ''}" data-tsrow="${i}"><button class="drag" type="button" data-drag="${i}" aria-label="Drag to reorder: ${esc(e.label)}" title="Drag to reorder">⋮⋮</button>
       <div class="ts-main"><div class="ts-head"><label class="ts-lbl${e.key ? ' key' : ''}" for="tsd_${i}">${c ? `<span class="gchip">${esc(c)}</span> ` : ''}${esc(e.label)}</label>
-        <button class="mini" type="button" data-act="tsUp" data-i="${i}" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>↑</button><button class="mini" type="button" data-act="tsDown" data-i="${i}" aria-label="Move down" ${i === N - 1 ? 'disabled' : ''}>↓</button>${e.custom ? `<button class="mini del" type="button" data-act="tsDel" data-i="${i}" aria-label="Remove ${esc(e.label)}">×</button>` : ''}</div>
+        <button class="mini" type="button" data-act="tsUp" data-i="${i}" data-to="${up ?? ''}" aria-label="Move up" ${up == null ? 'disabled' : ''}>↑</button><button class="mini" type="button" data-act="tsDown" data-i="${i}" data-to="${dn ?? ''}" aria-label="Move down" ${dn == null ? 'disabled' : ''}>↓</button>${e.custom ? `<button class="mini del" type="button" data-act="tsDel" data-i="${i}" aria-label="Remove ${esc(e.label)}">×</button>` : ''}</div>
       <div class="ts-ctl"><div class="dt"><input id="tsd_${i}" type="date" data-bind="ts.events.${i}.d" value="${esc(e.d)}" aria-label="Date, ${esc(e.label)}"><input id="ts_${i}" type="time" data-bind="ts.events.${i}.t" value="${esc(e.t)}" aria-label="Time LT, ${esc(e.label)}"></div><span class="lt">LT</span><button class="btn ghost small" type="button" data-act="now" data-i="${i}">Now</button></div>
       <div class="ts-warn" data-calc="tsw:${i}"></div></div></div>`; }).join('');
 }
@@ -243,7 +244,9 @@ export function tsWarn(events, i) {
   if (!e) return '';
   if (e.t && !e.d) return 'Add the date.';
   const a = evt(e); if (a == null) return '';
+  const grp = e.dl ?? null; // with times per delivery: compare within the same delivery (or the common events)
   for (let j = i - 1; j >= 0; j--) {
+    if ((events[j].dl ?? null) !== grp) continue;
     const p = evt(events[j]);
     if (p != null) { if (a < p) return `Out of order — earlier than “${esc(events[j].label)}” (${fmtDate(events[j].d)} ${events[j].t} LT).<button class="btn ghost small" type="button" data-act="sortTs">Sort by time?</button>`; break; }
   }

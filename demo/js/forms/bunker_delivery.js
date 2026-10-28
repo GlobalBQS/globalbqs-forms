@@ -1,13 +1,13 @@
-export const __v = '1.1.17-20261027-d93d7565';
+export const __v = '1.1.18-20261028-260f712d';
 // Bunker Delivery Survey (form_key bunker_delivery_survey) - port of the approved mockup "as received",
 // with prefill from the job, and the submit payload in contract gbqs.forms/1.
-import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.17-20261027-d93d7565';
-import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.17-20261027-d93d7565';
+import { esc, ICON, note, toast, modal, offsetMin, deviceOffset, OFFSETS } from '../ui.js?v=1.1.18-20261028-260f712d';
+import { parseNum, num, fx, sgn, r2, kgl, vcf54b, weigh } from './calc.js?v=1.1.18-20261028-260f712d';
 import {
   ctx, getPath, field, area, selectField, seg, confirmBox, vSig, sigPad, lockBar, photoBlock, tankCard, calc4, CALC_NOTE,
   tovOf, METHOD_KEY, lopCard, LOPV, LOPX, LOPS, lbl, evt, sortTs, tsRows, tsWarn, reviewList, flagList, hasSig, signed, portNow, portOffset, offsetPicker, sigGate,
   tankKey, usedTankKeys, duplicateTanks, freeTanks, removeRow, rowFilled, reveal,
-} from './components.js?v=1.1.17-20261027-d93d7565';
+} from './components.js?v=1.1.18-20261028-260f712d';
 
 export const key = 'bunker_delivery_survey';
 export const title = 'Bunker Delivery Survey';
@@ -165,6 +165,11 @@ const allDel = () => active().flatMap((g) => S().grades[g].del.map((d, j) => ({ 
 const delivs = () => allDel().map(({ g, d, j }) => ({ id: d.id, g, d, label: `${g} · ${String(d.name || '').trim() || (d.by ? BYL[d.by] : '') || 'Delivery ' + (j + 1)}` }));
 const dlLabel = (id) => { const x = delivs().find((v) => v.id === id); return x ? x.label : null; };
 const tsSplit = () => S().ts.events.some((e) => e.dl != null);
+// timesheet tabs (times per delivery): 'c' = common events, '<delivery id>' = that delivery, 'all' = everything
+const tsTabs = () => (tsSplit() && delivs().length > 1 ? [['c', 'Common'], ...delivs().map((x) => [String(x.id), x.label]), ['all', 'All events']] : null);
+const tsTab = () => { const T = tsTabs(); if (!T) return null; const t = S().ui.tsTab; return T.some((x) => x[0] === t) ? t : 'c'; };
+const tsShow = (t) => (t == null || t === 'all' ? null : t === 'c' ? (e) => e.dl == null : (e) => String(e.dl) === t);
+const tsTabOf = (e) => (e.dl == null ? 'c' : String(e.dl));
 const bargeDens = (g, d) => wDens([d]) ?? bdnDens(g);
 function bargePhase(g, d, t, k) { const m = t[k]; return weigh(num(m.method === 'gauge' ? m.gauge : m.tov), m.temp, bargeDens(g, d)); }
 function bargeTankDel(g, d, t) { if (!t) return null; const b = bargePhase(g, d, t, 'b'), a = bargePhase(g, d, t, 'a'); return b && a ? Math.round((b.mt - a.mt) * 1000) / 1000 : null; }
@@ -272,7 +277,7 @@ export function issues() {
   if (!s.bdn.confirm) add('result', 'Confirmation of the final figures', null, true);
   needSig('result', 'finalMaster'); needSig('result', 'finalSurveyor');
   if (!s.ts.location) add('time', 'Bunker location');
-  s.ts.events.forEach((e) => { if ((e.key || e.custom) && (!e.t || !e.d)) add('time', 'Date and time: ' + (e.dl != null && dlLabel(e.dl) ? dlLabel(e.dl) + ' – ' : '') + e.label.toLowerCase()); });
+  s.ts.events.forEach((e) => { if ((e.key || e.custom) && (!e.t || !e.d)) add('time', 'Date and time: ' + (e.dl != null && dlLabel(e.dl) ? dlLabel(e.dl) + ' – ' : '') + e.label.toLowerCase(), tsTabs() ? 'ts:' + tsTabOf(e) : null); });
   needSig('time', 'ts');
   if (!(s.photos.bdn || []).length) add('submit', 'Photo of the signed BDN');
   if (!s.final) add('submit', 'Your review as appointed surveyor');
@@ -452,14 +457,16 @@ R.time = () => {
   const s = S(), off = portOffset() ? 'UTC' + portOffset() : 'UTC offset not chosen';
   const nv = s.newEv;
   const DL = delivs(), many = DL.length > 1, split = tsSplit();
-  const addEv = `<div class="addev"><div class="grid two">${selectField('Add event', 'newEv.type', TSEV.map((x) => [x[0], x[1]]))}${nv.type === 'other' ? field('Event description', 'newEv.other', { ph: 'e.g. Pilot on board' }) : ''}${many ? selectField('For delivery', 'newEv.dl', [['', 'All deliveries'], ...DL.map((x) => [String(x.id), x.label])]) : ''}</div>
+  const tab = tsTab(), TT = tsTabs(), show = tsShow(tab);
+  const tabTxt = tab && tab !== 'all' ? (tab === 'c' ? ' (common to all deliveries)' : ' for ' + esc(dlLabel(+tab) || '')) : '';
+  const addEv = `<div class="addev"><div class="grid two">${selectField('Add event' + tabTxt, 'newEv.type', TSEV.map((x) => [x[0], x[1]]))}${nv.type === 'other' ? field('Event description', 'newEv.other', { ph: 'e.g. Pilot on board' }) : ''}${many && (!tab || tab === 'all') ? selectField('For delivery', 'newEv.dl', [['', 'All deliveries'], ...DL.map((x) => [String(x.id), x.label])]) : ''}</div>
       <button class="btn add" type="button" data-act="addEv" ${nv.type ? '' : 'disabled'}>+ Add event</button></div>`;
   const sv = s.survey;
   return `${lockBar('ts')}<section class="card" data-lockphase="ts"><div class="grid two">${field('Bunker location', 'ts.location', { req: 1 })}<div class="field"><span class="lbl">Grades</span><div class="out"><span class="v">${active().join(' · ') || '—'}</span></div></div></div></section>
-  <section class="card" data-lockphase="ts"><div class="card-h"><h3>Events · LT (${off})</h3><span data-calc="pump"></span><button class="btn ghost small" type="button" data-act="sortTs">Sort by time</button></div><p class="hint">Drag ⋮⋮ or use ↑ ↓ to change the order.</p>${many || split ? (split
-      ? note('ok', `Times per delivery: each delivery has its own hose, pumping and BDN times. Deliveries at the same time: enter the same times. A stop that only affects one delivery: choose that delivery when you add it. <button class="btn ghost small" type="button" data-act="mergeTs">Use one set of times</button>`)
+  <section class="card" data-lockphase="ts"><div class="card-h"><h3>Events · LT (${off})</h3><span data-calc="pump${tab && tab !== 'c' && tab !== 'all' ? ':' + tab : ''}"></span><button class="btn ghost small" type="button" data-act="sortTs">Sort by time</button></div>${TT ? `<div class="tabs" role="tablist" aria-label="Timesheet">${TT.map(([k, t]) => `<button type="button" role="tab" data-act="tsTab" data-t="${esc(k)}" data-keep aria-selected="${tab === k}">${esc(t)}${k === 'all' ? '' : `<span data-calc="tstabn:${esc(k)}"></span>`}</button>`).join('')}</div>` : ''}<p class="hint">Drag ⋮⋮ or use ↑ ↓ to change the order.</p>${many || split ? (split
+      ? note('ok', `Times per delivery. <b>Common</b>: events for the whole bunkering (arrival, all fast, documents). Each delivery tab: its own hose, pumping, stops and BDN times. Deliveries at the same time: enter the same times. <button class="btn ghost small" type="button" data-act="mergeTs">Use one set of times</button>`)
       : note('warn', `${DL.length} deliveries (${DL.map((x) => esc(x.label)).join(', ')}). Give each delivery its own hose and pumping times, so the pump rate per grade and barge is correct. <button class="btn ghost small" type="button" data-act="splitTs">Separate times per delivery</button>`)) : ''}
-    <div class="ts" id="tslist">${tsRows(s.ts.events, (e) => (many && e.dl != null ? dlLabel(e.dl) : null))}</div>${addEv}
+    <div class="ts" id="tslist">${tsRows(s.ts.events, (e) => (many && e.dl != null && (!tab || tab === 'all') ? dlLabel(e.dl) : null), show) || '<p class="empty">No events on this tab yet. Add one below.</p>'}</div>${addEv}
     <p class="hint">All times are local time of ${esc(s.order.port || 'the port')} (${off}), with the date, so a night shift counts correctly. Key events feed the pump rate in the vessel and supplier scorecards.</p></section>
   <section class="card"><div data-lockphase="ts">${area('Remarks timesheet', 'ts.remarks', { opt: 1, ph: 'Delays, stoppages and their reason.' })}</div>
     ${sigGate('ts')}
@@ -543,7 +550,12 @@ export const CALC = {
     return note('warn', `${out.map((r) => `<b>${r.g}</b> ${sgn(r.pct)}%`).join(', ')} outside ±${fx(TOL(), 2)}%. A Letter of Protest is usually issued to the supplier.`);
   },
   tsw(i) { return tsWarn(S().ts.events, +i); },
-  pump() {
+  tstabn(k) { const n = S().ts.events.filter((e) => tsTabOf(e) === k && (e.key || e.custom) && (!e.t || !e.d)).length; return n ? `<span class="tb warn">${n}</span>` : '<span class="tb ok">✓</span>'; },
+  pump(one) {
+    if (one != null && tsSplit()) {
+      const x = delivs().find((v) => String(v.id) === String(one)); if (x) { const m = pumping(x.id), q = num(x.d.qty); if (m == null) return '<span class="pill warn">Pump rate after pumping completed</span>';
+        return `<span class="subtot"><small>Pumping ${Math.floor(m / 60)} h ${m % 60} min${pumping.stops ? ' net' : ''} ·</small>${q && m ? fx(q / (m / 60), 1) : '—'} MT/h</span>`; }
+    }
     if (tsSplit() && delivs().length > 1) {
       const L = delivs().map((x) => { const m = pumping(x.id), q = num(x.d.qty); return `${esc(x.label)} ${m == null || !q || !m ? '—' : fx(q / (m / 60), 1)}`; });
       return `<span class="subtot"><small>Pump rate MT/h ·</small>${L.join(' · ')}</span>`;
@@ -572,6 +584,7 @@ export function act(a, b) {
     case 'emptyBefore': s.after.tanks[+b.dataset.i].emptyBefore = b.dataset.v === '1'; return done();
     case 'densManual': case 'densAuto': { const t = s.after.tanks[+b.dataset.i]; t.densAuto = a === 'densAuto'; if (!t.densAuto && !t.dens) { const x = autoDens(t); if (x) t.dens = x.d.toFixed(4); } return done(); }
     case 'tab': s.ui.tab[b.dataset.ph] = b.dataset.t; fm.render(false); return true;
+    case 'tsTab': s.ui.tsTab = b.dataset.t; fm.render(false); return true;
     case 'gotoSup': s.ui.tab.before = 'sup'; s.ui.step = SI('before'); fm.render(true); return true;
     case 'addBT': { const L = s.grades[b.dataset.g].del[+b.dataset.j].btanks; L.push({ id: nid(), name: '', open: true, b: BM(), a: BM() }); done(); reveal(document.querySelector(`[data-act="delBT"][data-g="${b.dataset.g}"][data-j="${b.dataset.j}"][data-i="${L.length - 1}"]`)?.closest('.tank')); return true; }
     case 'btToggle': { const t = s.grades[b.dataset.g].del[+b.dataset.j].btanks[+b.dataset.i]; t.open = !t.open; fm.render(false); return true; }
@@ -614,7 +627,7 @@ export function act(a, b) {
       const block = L.flatMap((x, k) => dlEv.map((e) => Object.assign({}, e, { id: k === 0 ? e.id : nid(), dl: x.id, custom: k > 0 ? true : !!e.custom })));
       const at = ev.findIndex(isDl), rest = ev.filter((e) => !isDl(e));
       rest.splice(ev.slice(0, at).filter((e) => !isDl(e)).length, 0, ...block);
-      s.ts.events = rest; return done('Times separated per delivery');
+      s.ts.events = rest; s.ui.tsTab = 'c'; return done('Times separated per delivery – one tab per delivery');
     }
     case 'mergeTs': {
       if (signed('ts')) return false;
@@ -627,7 +640,8 @@ export function act(a, b) {
       const nv = s.newEv, def = TSEV.find((x) => x[0] === nv.type); if (!def) return true; const ev = s.ts.events;
       const prevD = [...ev].reverse().find((e) => e.d); const label = nv.type === 'other' ? String(nv.other || '').trim() : def[1];
       if (!label) { toast('Enter the event description.'); return true; }
-      const dl = nv.dl ? +nv.dl : null; const e0 = { id: nid(), label, code: nv.type, d: prevD ? prevD.d : '', t: '', key: false, custom: true }; if (dl != null && dlLabel(dl)) e0.dl = dl;
+      const tb = tsTab(), tx = tb && tb !== 'all' && tb !== 'c' ? delivs().find((v) => String(v.id) === tb) : null;
+      const dl = tb && tb !== 'all' ? (tx ? tx.id : null) : nv.dl ? +nv.dl : null; const e0 = { id: nid(), label, code: nv.type, d: prevD ? prevD.d : '', t: '', key: false, custom: true }; if (dl != null && dlLabel(dl)) e0.dl = dl;
       ev.push(e0); s.newEv = { type: '', other: '', dl: '' }; fm.markSaved(); fm.render(false);
       const ti = document.getElementById('ts_' + (ev.length - 1)); reveal(ti && (ti.closest('tr, .ts-row, li, .row') || ti), ti); return true;
     }

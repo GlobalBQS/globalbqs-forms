@@ -1,11 +1,11 @@
-export const __v = '1.1.17-20261027-d93d7565';
+export const __v = '1.1.18-20261028-260f712d';
 // Form runtime: renders one step at a time (step rail + Back/Next), live calculations, locks after signing,
 // signature pads, photos, timesheet drag & drop, and the generic actions shared by all forms.
 // A form module supplies: STEPS, PHASE, SIGLBL, R (step renderers), CALC, issues(), flags(), act(), title.
-import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.17-20261027-d93d7565';
-import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled, reveal } from './components.js?v=1.1.17-20261027-d93d7565';
-import { parseNum } from './calc.js?v=1.1.17-20261027-d93d7565';
-import { BUILD } from '../../config.js?v=1.1.17-20261027-d93d7565';
+import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.18-20261028-260f712d';
+import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled, reveal } from './components.js?v=1.1.18-20261028-260f712d';
+import { parseNum } from './calc.js?v=1.1.18-20261028-260f712d';
+import { BUILD } from '../../config.js?v=1.1.18-20261028-260f712d';
 const APP_VERSION = String(BUILD.version || 'dev').split('-')[0];
 
 export function mountForm(root, opts) {
@@ -186,7 +186,7 @@ export function mountForm(root, opts) {
     if (a === 'back') { hooks.back(); return; }
     if (a === 'next' && S.ui.step < STEPS.length - 1) { S.ui.step++; hooks.save(S, true); render(true); return; }
     if (a === 'prev' && S.ui.step > 0) { S.ui.step--; hooks.save(S, true); render(true); return; }
-    if (a === 'goto') { S.ui.step = +b.dataset.i; const tb = b.dataset.tab, id = STEPS[S.ui.step].id; if ((tb === 'ves' || tb === 'sup') && S.ui.tab && S.ui.tab[id]) S.ui.tab[id] = tb; hooks.save(S, true); render(true); return; }
+    if (a === 'goto') { S.ui.step = +b.dataset.i; const tb = b.dataset.tab, id = STEPS[S.ui.step].id; if ((tb === 'ves' || tb === 'sup') && S.ui.tab && S.ui.tab[id]) S.ui.tab[id] = tb; if (tb && tb.startsWith('ts:')) S.ui.tsTab = tb.slice(3); hooks.save(S, true); render(true); return; }
     if (a === 'tankToggle') { const t = getPath(`${b.dataset.phase}.tanks.${b.dataset.i}`); if (t) { t.open = !t.open; render(false); } return; }
     if (ctx.readOnly) { if (form.readOnlyAct && form.readOnlyAct(a, b)) return; toast('This copy is read-only.'); return; }
     if (form.act && (await form.act(a, b)) === true) return;
@@ -217,7 +217,7 @@ export function mountForm(root, opts) {
       return;
     }
     if (['tsUp', 'tsDown', 'tsDel', 'sortTs', 'addEv'].includes(a) && form.PHASE.ts && signed('ts')) { toast('The timesheet is signed. Unlock it first.'); return; }
-    if (a === 'tsUp' || a === 'tsDown') { const i = +b.dataset.i; moveTs(S.ts.events, i, a === 'tsUp' ? i - 1 : i + 1); markSaved(); render(false); const nb = main.querySelector(`[data-act="${a}"][data-i="${a === 'tsUp' ? i - 1 : i + 1}"]`); if (nb && !nb.disabled) nb.focus(); return; }
+    if (a === 'tsUp' || a === 'tsDown') { const i = +b.dataset.i, to = b.dataset.to !== undefined && b.dataset.to !== '' ? +b.dataset.to : (a === 'tsUp' ? i - 1 : i + 1); moveTs(S.ts.events, i, to); markSaved(); render(false); const nb = main.querySelector(`[data-act="${a}"][data-i="${to}"]`); if (nb && !nb.disabled) nb.focus(); return; }
     if (a === 'tsDel') {
       const ev = S.ts.events[+b.dataset.i]; if (!ev || !ev.custom) return;
       await removeRow(`Remove “${ev.label}”?`, !!ev.t, () => { const k = S.ts.events.indexOf(ev); if (k >= 0) S.ts.events.splice(k, 1); }, () => { markSaved(); render(false); toast('Event removed'); });
@@ -283,8 +283,10 @@ export function mountForm(root, opts) {
   const onPointerMove = (e) => { if (!drag) return; e.preventDefault(); drag.y = e.clientY; placeDrag(); };
   const endDrag = () => {
     if (!drag) return; cancelAnimationFrame(drag.raf);
-    const { row, ph, list, from } = drag; let to = 0;
-    for (const c of list.children) { if (c === ph) break; if (c.classList.contains('ts-row') && c !== row) to++; }
+    const { row, ph, list, from } = drag; let k = 0; const vis = [];
+    for (const c of list.children) { if (c === ph) k = vis.length; else if (c.classList.contains('ts-row') && c !== row) vis.push(+c.dataset.tsrow); }
+    // k = visible position; map to the real array index (rows of other timesheet tabs are not in the list)
+    let to = from; if (vis.length) { const t = k < vis.length ? vis[k] : vis[vis.length - 1]; to = k < vis.length ? (from < t ? t - 1 : t) : (from < t ? t : t + 1); }
     drag = null; ph.remove(); row.removeAttribute('style'); row.classList.remove('dragging');
     if (to !== from) { moveTs(S.ts.events, from, to); markSaved(); } render(false);
   };
