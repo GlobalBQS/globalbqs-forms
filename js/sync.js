@@ -1,8 +1,8 @@
-export const __v = '1.1.16-20261024-683e6469';
+export const __v = '1.1.18-20261028-dcc96d7a';
 // Sync engine: draft push (debounced, with rev), file uploads (register -> PUT -> confirm) and the outbox
 // (files first, then submit; idempotent client ids; retry with backoff). Emits events on `bus`.
-import * as db from './db.js?v=1.1.16-20261024-683e6469';
-import { call, putFile, ApiError } from './api.js?v=1.1.16-20261024-683e6469';
+import * as db from './db.js?v=1.1.18-20261028-dcc96d7a';
+import { call, putFile, ApiError } from './api.js?v=1.1.18-20261028-dcc96d7a';
 
 export const bus = new EventTarget();
 const emit = (type, detail) => bus.dispatchEvent(new CustomEvent(type, { detail }));
