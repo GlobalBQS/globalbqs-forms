@@ -1,10 +1,10 @@
-export const __v = '1.1.18-20261028-dcc96d7a';
+export const __v = '1.1.19-20261028-59e5aa29';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.18-20261028-dcc96d7a';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.18-20261028-dcc96d7a';
+import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.19-20261028-59e5aa29';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.19-20261028-59e5aa29';
 
 export const ctx = {
   removePhoto: null, // app hook: drop a photo file (not uploaded / not linked)

@@ -1,8 +1,8 @@
-export const __v = '1.1.18-20261028-dcc96d7a';
+export const __v = '1.1.19-20261028-59e5aa29';
 // Sync engine: draft push (debounced, with rev), file uploads (register -> PUT -> confirm) and the outbox
 // (files first, then submit; idempotent client ids; retry with backoff). Emits events on `bus`.
-import * as db from './db.js?v=1.1.18-20261028-dcc96d7a';
-import { call, putFile, ApiError } from './api.js?v=1.1.18-20261028-dcc96d7a';
+import * as db from './db.js?v=1.1.19-20261028-59e5aa29';
+import { call, putFile, ApiError } from './api.js?v=1.1.19-20261028-59e5aa29';
 
 export const bus = new EventTarget();
 const emit = (type, detail) => bus.dispatchEvent(new CustomEvent(type, { detail }));
@@ -120,9 +120,19 @@ export function pullServerDraft(jobId) {
 // ---------- draft push ----------
 const timers = new Map();
 const running = new Map();
-export function schedulePush(jobId, delay = 2500) {
+export function schedulePush(jobId, delay = 1000) {
   clearTimeout(timers.get(jobId));
   timers.set(jobId, setTimeout(() => pushDraft(jobId).catch(() => {}), delay));
+}
+/** Send now (page hidden / closing): no debounce, request survives the page closing. */
+export function pushNow(jobId) {
+  clearTimeout(timers.get(jobId)); timers.delete(jobId);
+  return pushDraft(jobId, { keepalive: true }).catch(() => {});
+}
+/** true while this device has changes that GlobalBQS has not received yet */
+export async function hasUnsent(jobId) {
+  const [job, draft] = await Promise.all([db.get('jobs', jobId), db.get('drafts', jobId)]);
+  return !!(job && draft && job.session && !job.read_only && draft.local_rev !== job.pushed_local_rev && !['queued', 'submitted'].includes(job.status));
 }
 
 /** one runner per job */
@@ -133,7 +143,7 @@ function exclusive(key, fn) {
   return p;
 }
 
-export function pushDraft(jobId, { force = false, allowShrink = false } = {}) {
+export function pushDraft(jobId, { force = false, allowShrink = false, keepalive = false } = {}) {
   return exclusive('draft:' + jobId, async () => {
     const job = await db.get('jobs', jobId);
     if (!job || !job.session || job.read_only || !online()) return { skipped: true };
@@ -144,7 +154,7 @@ export function pushDraft(jobId, { force = false, allowShrink = false } = {}) {
     // never overwrite a server draft of another format (e.g. the previous submission) with a form not started yet
     if (job.foreign_draft && !(draft.state && draft.state.gate && draft.state.gate.done)) return { skipped: true, foreign: true };
     try {
-      const r = await call('/draft', { method: 'POST', session: job.session, body: { rev: job.server_rev || 0, payload: { format: 'gbqs.forms.draft/1', form_key: job.form_key, form_version: job.form_version, saved_at: draft.saved_at, state: draft.state, ...(allowShrink ? { allow_shrink: true } : {}) } } });
+      const r = await call('/draft', { method: 'POST', session: job.session, keepalive, timeoutMs: 15000, body: { rev: job.server_rev || 0, payload: { format: 'gbqs.forms.draft/1', form_key: job.form_key, form_version: job.form_version, saved_at: draft.saved_at, state: draft.state, ...(allowShrink ? { allow_shrink: true } : {}) } } });
       const j2 = await db.update('jobs', jobId, (j) => ({ ...j, server_rev: r.rev, pushed_local_rev: draft.local_rev, synced_at: new Date().toISOString(), status: j.status === 'new' ? 'in_progress' : j.status }));
       emit('synced', { jobId, job: j2 });
       return { ok: true, rev: r.rev };

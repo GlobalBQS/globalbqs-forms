@@ -1,15 +1,15 @@
-export const __v = '1.1.18-20261028-dcc96d7a';
+export const __v = '1.1.19-20261028-59e5aa29';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.18-20261028-dcc96d7a';
-import * as db from './db.js?v=1.1.18-20261028-dcc96d7a';
-import { call, ApiError, textFor } from './api.js?v=1.1.18-20261028-dcc96d7a';
-import * as sync from './sync.js?v=1.1.18-20261028-dcc96d7a';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.18-20261028-dcc96d7a';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.18-20261028-dcc96d7a';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.18-20261028-dcc96d7a';
-import { mountForm } from './forms/engine.js?v=1.1.18-20261028-dcc96d7a';
-import { imoOk } from './forms/calc.js?v=1.1.18-20261028-dcc96d7a';
+import { ENV } from '../config.js?v=1.1.19-20261028-59e5aa29';
+import * as db from './db.js?v=1.1.19-20261028-59e5aa29';
+import { call, ApiError, textFor } from './api.js?v=1.1.19-20261028-59e5aa29';
+import * as sync from './sync.js?v=1.1.19-20261028-59e5aa29';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.19-20261028-59e5aa29';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.19-20261028-59e5aa29';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.19-20261028-59e5aa29';
+import { mountForm } from './forms/engine.js?v=1.1.19-20261028-59e5aa29';
+import { imoOk } from './forms/calc.js?v=1.1.19-20261028-59e5aa29';
 
 const app = $('#app');
 let cleanup = null;
@@ -600,19 +600,25 @@ V.form = async (id) => {
   const reloadForm = (msg) => { if (reloading) return; reloading = true; clearTimeout(saveT); saveT = null; toast(msg); route(); };
   const onAdopted = (e) => { if (e.detail.jobId === id) reloadForm('Latest saved version loaded from GlobalBQS.'); };
   const onHide = async () => {
-    if (document.visibilityState === 'hidden') { flush(); return; }
+    if (document.visibilityState === 'hidden') { await flush(); sync.pushNow(id); return; }
     // back in front: pick up a newer / fuller version saved on GlobalBQS
     await flush();
     const r = await pullFirst(id);
     if (r && r.pending) { const j = await db.get('jobs', id); const ps = j && j.pending_stale; if (ps) { await db.put('jobs', { ...j, pending_stale: null }); onStale({ detail: { jobId: id, serverRev: ps.rev, server: { rev: ps.rev, saved_at: ps.saved_at, payload: ps.payload } } }); } }
   };
   sync.bus.addEventListener('adopted', onAdopted);
-  document.addEventListener('visibilitychange', onHide); addEventListener('pagehide', flush);
+  const onPageHide = () => { flush().then(() => sync.pushNow(id)); };
+  // closing the tab or browser with changes not yet sent: ask first (desktop browsers show their own dialog)
+  let unsent = false;
+  const checkUnsent = () => sync.hasUnsent(id).then((v) => { unsent = v; }).catch(() => {});
+  const onBeforeUnload = (e) => { if (saveT || unsent) { onPageHide(); e.preventDefault(); e.returnValue = ''; } };
+  const unsentT = setInterval(checkUnsent, 1500);
+  document.addEventListener('visibilitychange', onHide); addEventListener('pagehide', onPageHide); addEventListener('beforeunload', onBeforeUnload);
   cleanup = () => {
     flush(); ctl.destroy();
     sync.bus.removeEventListener('readonly', onRO); sync.bus.removeEventListener('synced', onSynced); sync.bus.removeEventListener('files', onFiles);
     sync.bus.removeEventListener('stale', onStale); sync.bus.removeEventListener('signin', onSignin); sync.bus.removeEventListener('net', onNet);
-    document.removeEventListener('visibilitychange', onHide); removeEventListener('pagehide', flush); sync.bus.removeEventListener('adopted', onAdopted);
+    document.removeEventListener('visibilitychange', onHide); removeEventListener('pagehide', onPageHide); removeEventListener('beforeunload', onBeforeUnload); clearInterval(unsentT); sync.bus.removeEventListener('adopted', onAdopted);
   };
   // a newer server draft found while opening the link, with local unpushed changes: ask now
   if (job.pending_stale) {
