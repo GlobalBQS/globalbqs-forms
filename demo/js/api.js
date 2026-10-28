@@ -1,7 +1,7 @@
-export const __v = '1.1.18-20261028-260f712d';
+export const __v = '1.1.19-20261028-bf2ed785';
 // forms-api client. Errors are always {ok:false, code, message} from the server; the app shows its own
 // English texts per code (server messages can be Dutch). Network problems become code "offline".
-import { ENV } from '../config.js?v=1.1.18-20261028-260f712d';
+import { ENV } from '../config.js?v=1.1.19-20261028-bf2ed785';
 
 export const TEXT = {
   files_pending: 'Waiting for photos/signatures to upload (see the list below).',
@@ -51,7 +51,7 @@ export class ApiError extends Error {
  * call('/job', {query:{token}, session}) / call('/draft', {method:'POST', body, session})
  * Resolves with the JSON body when ok !== false, otherwise throws ApiError.
  */
-export async function call(path, { method = 'GET', body, session, query, timeoutMs = 30000 } = {}) {
+export async function call(path, { method = 'GET', body, session, query, timeoutMs = 30000, keepalive = false } = {}) {
   if (typeof navigator !== 'undefined' && navigator.onLine === false) throw new ApiError('offline', 0);
   const url = new URL(ENV.apiBase + path);
   if (query) for (const [k, v] of Object.entries(query)) if (v != null) url.searchParams.set(k, v);
@@ -60,9 +60,12 @@ export async function call(path, { method = 'GET', body, session, query, timeout
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), timeoutMs);
+  const json = body !== undefined ? JSON.stringify(body) : undefined;
+  // keepalive lets the request finish when the page is being closed (browser limit ~64 KB)
+  const ka = keepalive && (!json || json.length < 60000);
   let res;
   try {
-    res = await fetch(url, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, signal: ctl.signal, cache: 'no-store', credentials: 'omit' });
+    res = await fetch(url, { method, headers, body: json, signal: ctl.signal, cache: 'no-store', credentials: 'omit', keepalive: ka });
   } catch {
     throw new ApiError('offline', 0);
   } finally { clearTimeout(t); }
