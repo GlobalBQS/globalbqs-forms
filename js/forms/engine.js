@@ -163,6 +163,29 @@ export function mountForm(root, opts) {
       return;
     }
     const v = el.type === 'checkbox' ? el.checked : el.value; setPath(el.dataset.bind, v);
+    { // timesheet: a time without a date takes the date of the nearest earlier event (same delivery first), else today at the port
+      const m = /^ts\.events\.(\d+)\.t$/.exec(el.dataset.bind || '');
+      const evs = S.ts && S.ts.events;
+      if (m && v && evs && evs[+m[1]] && !evs[+m[1]].d) {
+        const i = +m[1], grp = evs[i].dl ?? null; let d = '';
+        for (let j = i - 1; j >= 0 && !d; j--) if ((evs[j].dl ?? null) === grp && evs[j].d) d = evs[j].d;
+        for (let j = i - 1; j >= 0 && !d; j--) if (evs[j].d) d = evs[j].d;
+        if (!d && form.portNow) d = form.portNow().d;
+        if (d) { evs[i].d = d; const di = $('#tsd_' + i); if (di) di.value = d; }
+      }
+    }
+    { // timesheet: once a row has a date, the next empty row of the same delivery takes over that date (only the time is left to enter)
+      const m = /^ts\.events\.(\d+)\.[dt]$/.exec(el.dataset.bind || '');
+      const evs = S.ts && S.ts.events;
+      if (m && evs && evs[+m[1]] && evs[+m[1]].d) {
+        const i = +m[1], grp = evs[i].dl ?? null;
+        for (let j = i + 1; j < evs.length; j++) {
+          if ((evs[j].dl ?? null) !== grp) continue;
+          if (!evs[j].d && !evs[j].t) { evs[j].d = evs[i].d; const dj = $('#tsd_' + j); if (dj) dj.value = evs[i].d; }
+          break;
+        }
+      }
+    }
     if (form.onBind) form.onBind(el.dataset.bind, v);
     markSaved();
     if (el.type === 'checkbox' || el.tagName === 'SELECT') { render(false); return; }
@@ -219,7 +242,13 @@ export function mountForm(root, opts) {
     if (['tsUp', 'tsDown', 'tsDel', 'sortTs', 'addEv'].includes(a) && form.PHASE.ts && signed('ts')) { toast('The timesheet is signed. Unlock it first.'); return; }
     if (a === 'tsUp' || a === 'tsDown') { const i = +b.dataset.i, to = b.dataset.to !== undefined && b.dataset.to !== '' ? +b.dataset.to : (a === 'tsUp' ? i - 1 : i + 1); moveTs(S.ts.events, i, to); markSaved(); render(false); const nb = main.querySelector(`[data-act="${a}"][data-i="${to}"]`); if (nb && !nb.disabled) nb.focus(); return; }
     if (a === 'tsDel') {
-      const ev = S.ts.events[+b.dataset.i]; if (!ev || !ev.custom) return;
+      const ev = S.ts.events[+b.dataset.i]; if (!ev) return;
+      const drop = () => { const k = S.ts.events.indexOf(ev); if (k >= 0) S.ts.events.splice(k, 1); markSaved(); render(false); toast('Event removed'); };
+      if (ev.key) { // standard key event: used for pump rate and waiting times
+        const v = await modal(`Remove “${ev.label}”?`, '<p>This event is used to calculate the pump rate and waiting times. Only remove it if it did not happen during this delivery. You can add it again with “Add event”.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove', value: 'rm', kind: 'danger' }]);
+        if (v === 'rm') drop();
+        return;
+      }
       await removeRow(`Remove “${ev.label}”?`, !!ev.t, () => { const k = S.ts.events.indexOf(ev); if (k >= 0) S.ts.events.splice(k, 1); }, () => { markSaved(); render(false); toast('Event removed'); });
       return;
     }
