@@ -1,11 +1,11 @@
-export const __v = '1.1.20-20261031-98de01fa';
+export const __v = '1.1.20-20261031-d3db1c01';
 // Form runtime: renders one step at a time (step rail + Back/Next), live calculations, locks after signing,
 // signature pads, photos, timesheet drag & drop, and the generic actions shared by all forms.
 // A form module supplies: STEPS, PHASE, SIGLBL, R (step renderers), CALC, issues(), flags(), act(), title.
-import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.20-20261031-98de01fa';
-import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled, reveal } from './components.js?v=1.1.20-20261031-98de01fa';
-import { parseNum } from './calc.js?v=1.1.20-20261031-98de01fa';
-import { BUILD } from '../../config.js?v=1.1.20-20261031-98de01fa';
+import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.20-20261031-d3db1c01';
+import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled, reveal } from './components.js?v=1.1.20-20261031-d3db1c01';
+import { parseNum } from './calc.js?v=1.1.20-20261031-d3db1c01';
+import { BUILD } from '../../config.js?v=1.1.20-20261031-d3db1c01';
 const APP_VERSION = String(BUILD.version || 'dev').split('-')[0];
 
 export function mountForm(root, opts) {
