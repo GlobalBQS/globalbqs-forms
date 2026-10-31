@@ -1,11 +1,11 @@
-export const __v = '1.1.19-20261028-bf2ed785';
+export const __v = '1.1.20-20261031-';
 // Form runtime: renders one step at a time (step rail + Back/Next), live calculations, locks after signing,
 // signature pads, photos, timesheet drag & drop, and the generic actions shared by all forms.
 // A form module supplies: STEPS, PHASE, SIGLBL, R (step renderers), CALC, issues(), flags(), act(), title.
-import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.19-20261028-bf2ed785';
-import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled, reveal } from './components.js?v=1.1.19-20261028-bf2ed785';
-import { parseNum } from './calc.js?v=1.1.19-20261028-bf2ed785';
-import { BUILD } from '../../config.js?v=1.1.19-20261028-bf2ed785';
+import { $, $$, esc, ICON, note, toast, modal, closeModal, modalOpen, LOGO } from '../ui.js?v=1.1.20-20261031-';
+import { ctx, getPath, setPath, hasSig, signed, numCheck, stamp, moveTs, sortTs, tsWarn, newLop, sigLock, sigState, sigGateHtml, SIG_OPEN_MSG, removeRow, rowFilled, reveal } from './components.js?v=1.1.20-20261031-';
+import { parseNum } from './calc.js?v=1.1.20-20261031-';
+import { BUILD } from '../../config.js?v=1.1.20-20261031-';
 const APP_VERSION = String(BUILD.version || 'dev').split('-')[0];
 
 export function mountForm(root, opts) {
@@ -163,6 +163,17 @@ export function mountForm(root, opts) {
       return;
     }
     const v = el.type === 'checkbox' ? el.checked : el.value; setPath(el.dataset.bind, v);
+    { // timesheet: a time without a date takes the date of the nearest earlier event (same delivery first), else today at the port
+      const m = /^ts\.events\.(\d+)\.t$/.exec(el.dataset.bind || '');
+      const evs = S.ts && S.ts.events;
+      if (m && v && evs && evs[+m[1]] && !evs[+m[1]].d) {
+        const i = +m[1], grp = evs[i].dl ?? null; let d = '';
+        for (let j = i - 1; j >= 0 && !d; j--) if ((evs[j].dl ?? null) === grp && evs[j].d) d = evs[j].d;
+        for (let j = i - 1; j >= 0 && !d; j--) if (evs[j].d) d = evs[j].d;
+        if (!d && form.portNow) d = form.portNow().d;
+        if (d) { evs[i].d = d; const di = $('#tsd_' + i); if (di) di.value = d; }
+      }
+    }
     if (form.onBind) form.onBind(el.dataset.bind, v);
     markSaved();
     if (el.type === 'checkbox' || el.tagName === 'SELECT') { render(false); return; }
@@ -219,7 +230,13 @@ export function mountForm(root, opts) {
     if (['tsUp', 'tsDown', 'tsDel', 'sortTs', 'addEv'].includes(a) && form.PHASE.ts && signed('ts')) { toast('The timesheet is signed. Unlock it first.'); return; }
     if (a === 'tsUp' || a === 'tsDown') { const i = +b.dataset.i, to = b.dataset.to !== undefined && b.dataset.to !== '' ? +b.dataset.to : (a === 'tsUp' ? i - 1 : i + 1); moveTs(S.ts.events, i, to); markSaved(); render(false); const nb = main.querySelector(`[data-act="${a}"][data-i="${to}"]`); if (nb && !nb.disabled) nb.focus(); return; }
     if (a === 'tsDel') {
-      const ev = S.ts.events[+b.dataset.i]; if (!ev || !ev.custom) return;
+      const ev = S.ts.events[+b.dataset.i]; if (!ev) return;
+      const drop = () => { const k = S.ts.events.indexOf(ev); if (k >= 0) S.ts.events.splice(k, 1); markSaved(); render(false); toast('Event removed'); };
+      if (ev.key) { // standard key event: used for pump rate and waiting times
+        const v = await modal(`Remove “${ev.label}”?`, '<p>This event is used to calculate the pump rate and waiting times. Only remove it if it did not happen during this delivery. You can add it again with “Add event”.</p>', [{ label: 'Cancel', value: null }, { label: 'Remove', value: 'rm', kind: 'danger' }]);
+        if (v === 'rm') drop();
+        return;
+      }
       await removeRow(`Remove “${ev.label}”?`, !!ev.t, () => { const k = S.ts.events.indexOf(ev); if (k >= 0) S.ts.events.splice(k, 1); }, () => { markSaved(); render(false); toast('Event removed'); });
       return;
     }

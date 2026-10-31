@@ -1,10 +1,10 @@
-export const __v = '1.1.19-20261028-bf2ed785';
+export const __v = '1.1.20-20261031-';
 // Shared form components (used by Bunker Delivery now, and by B221 / Bunker / B+C / Condition in phase C):
 // fields, segmented buttons, confirm boxes, signature pads with lock/unlock and vessel options,
 // photo blocks, tank rows (sounding / ullage / gauge), LOP cards, timesheet, review checklist.
 // All renderers read the current form state through `ctx`.
-import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.19-20261028-bf2ed785';
-import { parseNum, fx, RANGE } from './calc.js?v=1.1.19-20261028-bf2ed785';
+import { esc, ICON, note, nowIn, fmtDate, modal, toast } from '../ui.js?v=1.1.20-20261031-';
+import { parseNum, fx, RANGE } from './calc.js?v=1.1.20-20261031-';
 
 export const ctx = {
   removePhoto: null, // app hook: drop a photo file (not uploaded / not linked)
@@ -235,7 +235,7 @@ export function tsRows(events, chip, show) {
   const vis = []; events.forEach((e, i) => { if (!show || show(e)) vis.push(i); });
   return vis.map((i, k) => { const e = events[i], c = chip ? chip(e) : null, up = k > 0 ? vis[k - 1] : null, dn = k < vis.length - 1 ? vis[k + 1] : null; return `<div class="ts-row${e.t && e.d ? ' set' : ''}" data-tsrow="${i}"><button class="drag" type="button" data-drag="${i}" aria-label="Drag to reorder: ${esc(e.label)}" title="Drag to reorder">⋮⋮</button>
       <div class="ts-main"><div class="ts-head"><label class="ts-lbl${e.key ? ' key' : ''}" for="tsd_${i}">${c ? `<span class="gchip">${esc(c)}</span> ` : ''}${esc(e.label)}</label>
-        <button class="mini" type="button" data-act="tsUp" data-i="${i}" data-to="${up ?? ''}" aria-label="Move up" ${up == null ? 'disabled' : ''}>↑</button><button class="mini" type="button" data-act="tsDown" data-i="${i}" data-to="${dn ?? ''}" aria-label="Move down" ${dn == null ? 'disabled' : ''}>↓</button>${e.custom ? `<button class="mini del" type="button" data-act="tsDel" data-i="${i}" aria-label="Remove ${esc(e.label)}">×</button>` : ''}</div>
+        <button class="mini" type="button" data-act="tsUp" data-i="${i}" data-to="${up ?? ''}" aria-label="Move up" ${up == null ? 'disabled' : ''}>↑</button><button class="mini" type="button" data-act="tsDown" data-i="${i}" data-to="${dn ?? ''}" aria-label="Move down" ${dn == null ? 'disabled' : ''}>↓</button><button class="mini del" type="button" data-act="tsDel" data-i="${i}" aria-label="Remove ${esc(e.label)}" title="Remove this event">×</button></div>
       <div class="ts-ctl"><div class="dt"><input id="tsd_${i}" type="date" data-bind="ts.events.${i}.d" value="${esc(e.d)}" aria-label="Date, ${esc(e.label)}"><input id="ts_${i}" type="time" data-bind="ts.events.${i}.t" value="${esc(e.t)}" aria-label="Time LT, ${esc(e.label)}"></div><span class="lt">LT</span><button class="btn ghost small" type="button" data-act="now" data-i="${i}">Now</button></div>
       <div class="ts-warn" data-calc="tsw:${i}"></div></div></div>`; }).join('');
 }
