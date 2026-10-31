@@ -1,4 +1,4 @@
-export const __v = '1.1.20-20261031-';
+export const __v = '1.1.20-20261031-98de01fa';
 // Small IndexedDB wrapper. Stores:
 //   jobs    (job_id)  job record: token, session, summary, prefill, status, revs, read_only, ...
 //   drafts  (job_id)  form state as entered on this device (+ local_rev)
