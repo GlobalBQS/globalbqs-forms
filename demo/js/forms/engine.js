@@ -174,6 +174,18 @@ export function mountForm(root, opts) {
         if (d) { evs[i].d = d; const di = $('#tsd_' + i); if (di) di.value = d; }
       }
     }
+    { // timesheet: once a row has a date, the next empty row of the same delivery takes over that date (only the time is left to enter)
+      const m = /^ts\.events\.(\d+)\.[dt]$/.exec(el.dataset.bind || '');
+      const evs = S.ts && S.ts.events;
+      if (m && evs && evs[+m[1]] && evs[+m[1]].d) {
+        const i = +m[1], grp = evs[i].dl ?? null;
+        for (let j = i + 1; j < evs.length; j++) {
+          if ((evs[j].dl ?? null) !== grp) continue;
+          if (!evs[j].d && !evs[j].t) { evs[j].d = evs[i].d; const dj = $('#tsd_' + j); if (dj) dj.value = evs[i].d; }
+          break;
+        }
+      }
+    }
     if (form.onBind) form.onBind(el.dataset.bind, v);
     markSaved();
     if (el.type === 'checkbox' || el.tagName === 'SELECT') { render(false); return; }
