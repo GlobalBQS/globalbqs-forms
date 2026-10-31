@@ -1,7 +1,7 @@
-export const __v = '1.1.19-20261028-59e5aa29';
+export const __v = '1.1.20-20261031-490c8eb1';
 // forms-api client. Errors are always {ok:false, code, message} from the server; the app shows its own
 // English texts per code (server messages can be Dutch). Network problems become code "offline".
-import { ENV } from '../config.js?v=1.1.19-20261028-59e5aa29';
+import { ENV } from '../config.js?v=1.1.20-20261031-490c8eb1';
 
 export const TEXT = {
   files_pending: 'Waiting for photos/signatures to upload (see the list below).',
