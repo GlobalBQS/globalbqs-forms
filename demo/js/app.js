@@ -1,19 +1,20 @@
-export const __v = '1.1.20-20261031-d3db1c01';
+export const __v = '1.1.21-20261109-bcc02daa';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.20-20261031-d3db1c01';
-import * as db from './db.js?v=1.1.20-20261031-d3db1c01';
-import { call, ApiError, textFor } from './api.js?v=1.1.20-20261031-d3db1c01';
-import * as sync from './sync.js?v=1.1.20-20261031-d3db1c01';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.20-20261031-d3db1c01';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.20-20261031-d3db1c01';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.20-20261031-d3db1c01';
-import { mountForm } from './forms/engine.js?v=1.1.20-20261031-d3db1c01';
-import { imoOk } from './forms/calc.js?v=1.1.20-20261031-d3db1c01';
+import { ENV } from '../config.js?v=1.1.21-20261109-bcc02daa';
+import * as db from './db.js?v=1.1.21-20261109-bcc02daa';
+import { call, ApiError, textFor } from './api.js?v=1.1.21-20261109-bcc02daa';
+import * as sync from './sync.js?v=1.1.21-20261109-bcc02daa';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.21-20261109-bcc02daa';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.21-20261109-bcc02daa';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.21-20261109-bcc02daa';
+import { mountForm } from './forms/engine.js?v=1.1.21-20261109-bcc02daa';
+import { imoOk } from './forms/calc.js?v=1.1.21-20261109-bcc02daa';
 
 const app = $('#app');
 let cleanup = null;
 const pending = new Map(); // token -> {summary, codeSent, email, expires, code, takeover}
+const portalCodes = new Map(); // token -> one-time code from 'Open in app' in the GlobalBQS portal (never in the URL after routing)
 
 // ---------- environment / device ----------
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -164,6 +165,9 @@ V.link = async (token) => {
     return;
   }
   pending.set(token, { summary: r.summary, active: r.active_device, job: r.job });
+  // opened from the portal ('Open in app'): the surveyor is already signed in there, so no e-mail code
+  const pc = portalCodes.get(token);
+  if (pc) { portalCodes.delete(token); Object.assign(pending.get(token), { code: pc, portal: true }); location.replace('#/signin/' + token); return; }
   const skipped = await db.kvGet('install_skipped', false);
   if (!isStandalone() && !skipped) location.replace('#/install/' + token);
   else location.replace('#/signin/' + token);
@@ -272,6 +276,12 @@ V.signin = async (token) => {
     }
   }
   V._verify = verify;
+  if (p.portal && /^\d{6}$/.test(p.code || '')) {
+    p.portal = false;
+    repaint(`${bar('Sign in on this device', 'Signed in through the GlobalBQS portal')}<div class="content"><div class="card"><p class="muted" style="margin:0">Opening the job…</p></div></div>`);
+    await verify(false);
+    return;
+  }
   render();
 };
 
@@ -704,6 +714,7 @@ async function route() {
   const h = location.hash.replace(/^#/, '') || '/';
   let m;
   try {
+    if ((m = /^\/j\/([0-9a-fA-F]{64})\/pc\/(\d{6})$/.exec(h))) { portalCodes.set(m[1].toLowerCase(), m[2]); location.replace('#/j/' + m[1].toLowerCase()); return; }
     if ((m = /^\/j\/([0-9a-fA-F]{64})\/?$/.exec(h))) return await V.link(m[1]);
     if ((m = /^\/install\/([0-9a-f]{64})$/.exec(h))) return await V.install(m[1]);
     if ((m = /^\/signin\/([0-9a-f]{64})$/.exec(h))) return await V.signin(m[1]);
