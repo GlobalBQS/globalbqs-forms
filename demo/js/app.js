@@ -1,15 +1,15 @@
-export const __v = '1.1.22-20261110-bebd139d';
+export const __v = '1.1.23-20261110-13efa6d5';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.22-20261110-bebd139d';
-import * as db from './db.js?v=1.1.22-20261110-bebd139d';
-import { call, ApiError, textFor } from './api.js?v=1.1.22-20261110-bebd139d';
-import * as sync from './sync.js?v=1.1.22-20261110-bebd139d';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.22-20261110-bebd139d';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.22-20261110-bebd139d';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.22-20261110-bebd139d';
-import { mountForm } from './forms/engine.js?v=1.1.22-20261110-bebd139d';
-import { imoOk } from './forms/calc.js?v=1.1.22-20261110-bebd139d';
+import { ENV } from '../config.js?v=1.1.23-20261110-13efa6d5';
+import * as db from './db.js?v=1.1.23-20261110-13efa6d5';
+import { call, ApiError, textFor } from './api.js?v=1.1.23-20261110-13efa6d5';
+import * as sync from './sync.js?v=1.1.23-20261110-13efa6d5';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.23-20261110-13efa6d5';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.23-20261110-13efa6d5';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.23-20261110-13efa6d5';
+import { mountForm } from './forms/engine.js?v=1.1.23-20261110-13efa6d5';
+import { imoOk } from './forms/calc.js?v=1.1.23-20261110-13efa6d5';
 
 const app = $('#app');
 let cleanup = null;
@@ -668,11 +668,13 @@ V.status = async (id) => {
     const j = await db.get('jobs', id), ob = await db.get('outbox', id);
     const files = (await db.byIndex('files', 'job_id', id)).filter((f) => !ob || (ob.file_ids || []).includes(f.id));
     const sent = ob && ob.status === 'sent', blocked = ob && ob.status === 'blocked';
+    // not signed in on this device (session missing or ended): the outbox cannot send until the surveyor signs in again
+    const noSession = !!ob && !sent && !blocked && !j.session;
     const s = j.summary || {};
     const done = sent || j.status === 'submitted', stg = j.review || (done ? 'processing' : null), at = (k) => REVIEW_ORDER.indexOf(stg) >= REVIEW_ORDER.indexOf(k);
     const steps = [
       ['Reviewed and signed by you', 'You reviewed the survey and signed it as the appointed surveyor. Stored on this device.', true],
-      ['Submitted', sent ? `Received ${ob.sent_at ? 'at ' + esc(new Date(ob.sent_at).toLocaleString()) : ''}. Submission ID <span class="mono">${esc(ob.result?.submission_id || '—')}</span>.` : done ? 'Received by GlobalBQS.' : blocked ? esc(textFor(ob.last_error)) : navigator.onLine ? 'Sending… keep the app open.' : 'Waiting for signal. Keep the app on your device; it sends by itself. Opening the app ashore speeds it up.', done],
+      ['Submitted', sent ? `Received ${ob.sent_at ? 'at ' + esc(new Date(ob.sent_at).toLocaleString()) : ''}. Submission ID <span class="mono">${esc(ob.result?.submission_id || '—')}</span>.` : done ? 'Received by GlobalBQS.' : blocked ? esc(textFor(ob.last_error)) : noSession ? 'Not signed in on this device – sign in again to send it.' : navigator.onLine ? 'Sending… keep the app open.' : 'Waiting for signal. Keep the app on your device; it sends by itself. Opening the app ashore speeds it up.', done],
       ['Draft report e-mailed to you', stg === 'correction' ? 'You requested a correction. GlobalBQS is handling it.' : 'We e-mail you the draft report within a few minutes. Check it and tap <b>Approve</b>, or request a correction.', done && at('awaiting_confirmation')],
       ['Confirmed by you', 'The report is issued to the client only after your confirmation.', done && at('approved')],
       ['Report issued to the client', 'GlobalBQS issues the report to the client.', done && at('issued')],
@@ -685,6 +687,7 @@ V.status = async (id) => {
       ${done ? reviewNote(stg) : ''}
       ${sent ? note('ok', `<b>Received by GlobalBQS.</b> Submission ID <span class="mono">${esc(ob.result?.submission_id || '')}</span>.${ob.result?.duplicate ? ' (already received earlier)' : ''}`)
         : blocked ? note('bad', `<b>${esc(textFor(ob.last_error))}</b>`)
+        : noSession ? note('warn', `<b>Sign in again to send.</b> You are no longer signed in on this device, so the survey cannot be sent yet. It is safe here – do not clear the browser. Sign in with the job link (code by e-mail); it sends by itself afterwards.${j.token ? `<button class="btn primary block" type="button" data-go="#/j/${esc(j.token)}" style="margin-top:10px">Sign in to send</button>` : ''}`)
         : note('warn', '<b>Not sent yet.</b> Everything is safe on this device. Do not delete the app or clear the browser until it shows Submitted.')}
       ${!ob && !done ? note('info', 'No submission on this device.') : ''}
       <div class="card"><ol class="tl">${steps.map((x, i) => `<li class="${x[2] ? 'done' : i === now ? 'now' : ''}"><span class="d">${x[2] ? '✓' : ''}</span><div><b>${x[0]}</b><span>${x[1]}</span></div></li>`).join('')}</ol></div>
@@ -693,7 +696,7 @@ V.status = async (id) => {
         <ul class="ob" id="obList"><li><span>Survey data and figures<small>${(JSON.stringify(ob.payload).length / 1024).toFixed(1)} kB</small></span>${sent ? '<span class="pill ok">Sent</span>' : '<span class="pill warn">Waiting</span>'}</li>
         ${files.map((f) => `<li data-file="${esc(f.id)}"><span>${esc(f.label || f.kind)}<small>${((f.size || 0) / 1048576).toFixed(2)} MB${(f.status === 'error' || f.status === 'lost') && f.error_text ? ' · ' + esc(f.error_text) : ''}</small></span>${pill(f)}</li>`).join('')}</ul>
         ${failing.length && !sent ? note('warn', `<b>${failing.length} file${failing.length > 1 ? 's' : ''} could not be uploaded yet.</b> The app keeps trying by itself. Tap <b>Send now</b> to retry immediately; if it keeps failing, contact GlobalBQS operations – your survey stays safe on this device.`) : ''}
-        ${!sent && !blocked ? `<button class="btn ghost block" type="button" id="sendNow" ${navigator.onLine ? '' : 'disabled'}>Send now</button>` : ''}</div>` : ''}
+        ${!sent && !blocked && !noSession ? `<button class="btn ghost block" type="button" id="sendNow" ${navigator.onLine ? '' : 'disabled'}>Send now</button>` : ''}</div>` : ''}
       ${note('info', 'Job cancelled by the client while you were offline? Your submission will still be received and checked by ops. You do not need to do anything.')}
       <button class="btn primary block" type="button" data-go="#/">Back to my jobs</button>
     </div>`);
