@@ -1,15 +1,15 @@
-export const __v = '1.1.21-20261109-bcc02daa';
+export const __v = '1.1.22-20261110-bebd139d';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.21-20261109-bcc02daa';
-import * as db from './db.js?v=1.1.21-20261109-bcc02daa';
-import { call, ApiError, textFor } from './api.js?v=1.1.21-20261109-bcc02daa';
-import * as sync from './sync.js?v=1.1.21-20261109-bcc02daa';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.21-20261109-bcc02daa';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.21-20261109-bcc02daa';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.21-20261109-bcc02daa';
-import { mountForm } from './forms/engine.js?v=1.1.21-20261109-bcc02daa';
-import { imoOk } from './forms/calc.js?v=1.1.21-20261109-bcc02daa';
+import { ENV } from '../config.js?v=1.1.22-20261110-bebd139d';
+import * as db from './db.js?v=1.1.22-20261110-bebd139d';
+import { call, ApiError, textFor } from './api.js?v=1.1.22-20261110-bebd139d';
+import * as sync from './sync.js?v=1.1.22-20261110-bebd139d';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.22-20261110-bebd139d';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.22-20261110-bebd139d';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.22-20261110-bebd139d';
+import { mountForm } from './forms/engine.js?v=1.1.22-20261110-bebd139d';
+import { imoOk } from './forms/calc.js?v=1.1.22-20261110-bebd139d';
 
 const app = $('#app');
 let cleanup = null;
@@ -700,11 +700,21 @@ V.status = async (id) => {
     const sn = $('#sendNow'); if (sn) sn.onclick = () => { sn.disabled = true; sync.processOutbox(id, { force: true }); };
   };
   await render();
-  refreshReview(id).then((changed) => { if (changed) render(); });
+  // keep the report status current while this screen is open (every 20 s while visible, and on return to the app/tab)
+  let polling = false;
+  const poll = async () => {
+    if (polling || document.visibilityState !== 'visible') return;
+    polling = true;
+    try { const j = await db.get('jobs', id); if (j && j.review !== 'issued' && (await refreshReview(id))) render(); } finally { polling = false; }
+  };
+  poll();
+  const pt = setInterval(poll, 20000);
+  const onVis = () => { if (document.visibilityState === 'visible') poll(); };
+  document.addEventListener('visibilitychange', onVis); addEventListener('focus', onVis); addEventListener('online', onVis);
   let t = null;
-  const re = (e) => { if (e.detail && e.detail.jobId && e.detail.jobId !== id) return; clearTimeout(t); t = setTimeout(render, 120); };
+  const re = (e) => { if (e.detail && e.detail.jobId && e.detail.jobId !== id) return; clearTimeout(t); t = setTimeout(() => { render(); poll(); }, 120); };
   sync.bus.addEventListener('outbox', re); sync.bus.addEventListener('files', re); sync.bus.addEventListener('net', re);
-  cleanup = () => { sync.bus.removeEventListener('outbox', re); sync.bus.removeEventListener('files', re); sync.bus.removeEventListener('net', re); };
+  cleanup = () => { clearInterval(pt); document.removeEventListener('visibilitychange', onVis); removeEventListener('focus', onVis); removeEventListener('online', onVis); sync.bus.removeEventListener('outbox', re); sync.bus.removeEventListener('files', re); sync.bus.removeEventListener('net', re); };
   if (navigator.onLine) sync.processOutbox(id, { force: true });
 };
 
