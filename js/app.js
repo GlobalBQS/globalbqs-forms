@@ -1,19 +1,20 @@
-export const __v = '1.1.20-20261031-490c8eb1';
+export const __v = '1.1.23-20261110-2449a0eb';
 // GlobalBQS Forms - app shell: routing, journey screens (link -> install -> code -> takeover -> my jobs -> job
 // -> start check -> form -> status), service worker + update prompt, network state.
-import { ENV } from '../config.js?v=1.1.20-20261031-490c8eb1';
-import * as db from './db.js?v=1.1.20-20261031-490c8eb1';
-import { call, ApiError, textFor } from './api.js?v=1.1.20-20261031-490c8eb1';
-import * as sync from './sync.js?v=1.1.20-20261031-490c8eb1';
-import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.20-20261031-490c8eb1';
-import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.20-20261031-490c8eb1';
-import { loadForm, isSupported } from './forms/registry.js?v=1.1.20-20261031-490c8eb1';
-import { mountForm } from './forms/engine.js?v=1.1.20-20261031-490c8eb1';
-import { imoOk } from './forms/calc.js?v=1.1.20-20261031-490c8eb1';
+import { ENV } from '../config.js?v=1.1.23-20261110-2449a0eb';
+import * as db from './db.js?v=1.1.23-20261110-2449a0eb';
+import { call, ApiError, textFor } from './api.js?v=1.1.23-20261110-2449a0eb';
+import * as sync from './sync.js?v=1.1.23-20261110-2449a0eb';
+import { $, esc, ICON, LOGO, note, toast, modal, closeModal, timeAgo, fileId, offsetMin } from './ui.js?v=1.1.23-20261110-2449a0eb';
+import { compressPhoto, exifToIso, strokesToPng } from './photos.js?v=1.1.23-20261110-2449a0eb';
+import { loadForm, isSupported } from './forms/registry.js?v=1.1.23-20261110-2449a0eb';
+import { mountForm } from './forms/engine.js?v=1.1.23-20261110-2449a0eb';
+import { imoOk } from './forms/calc.js?v=1.1.23-20261110-2449a0eb';
 
 const app = $('#app');
 let cleanup = null;
 const pending = new Map(); // token -> {summary, codeSent, email, expires, code, takeover}
+const portalCodes = new Map(); // token -> one-time code from 'Open in app' in the GlobalBQS portal (never in the URL after routing)
 
 // ---------- environment / device ----------
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
@@ -164,6 +165,9 @@ V.link = async (token) => {
     return;
   }
   pending.set(token, { summary: r.summary, active: r.active_device, job: r.job });
+  // opened from the portal ('Open in app'): the surveyor is already signed in there, so no e-mail code
+  const pc = portalCodes.get(token);
+  if (pc) { portalCodes.delete(token); Object.assign(pending.get(token), { code: pc, portal: true }); location.replace('#/signin/' + token); return; }
   const skipped = await db.kvGet('install_skipped', false);
   if (!isStandalone() && !skipped) location.replace('#/install/' + token);
   else location.replace('#/signin/' + token);
@@ -272,6 +276,12 @@ V.signin = async (token) => {
     }
   }
   V._verify = verify;
+  if (p.portal && /^\d{6}$/.test(p.code || '')) {
+    p.portal = false;
+    repaint(`${bar('Sign in on this device', 'Signed in through the GlobalBQS portal')}<div class="content"><div class="card"><p class="muted" style="margin:0">Opening the job…</p></div></div>`);
+    await verify(false);
+    return;
+  }
   render();
 };
 
@@ -658,11 +668,13 @@ V.status = async (id) => {
     const j = await db.get('jobs', id), ob = await db.get('outbox', id);
     const files = (await db.byIndex('files', 'job_id', id)).filter((f) => !ob || (ob.file_ids || []).includes(f.id));
     const sent = ob && ob.status === 'sent', blocked = ob && ob.status === 'blocked';
+    // not signed in on this device (session missing or ended): the outbox cannot send until the surveyor signs in again
+    const noSession = !!ob && !sent && !blocked && !j.session;
     const s = j.summary || {};
     const done = sent || j.status === 'submitted', stg = j.review || (done ? 'processing' : null), at = (k) => REVIEW_ORDER.indexOf(stg) >= REVIEW_ORDER.indexOf(k);
     const steps = [
       ['Reviewed and signed by you', 'You reviewed the survey and signed it as the appointed surveyor. Stored on this device.', true],
-      ['Submitted', sent ? `Received ${ob.sent_at ? 'at ' + esc(new Date(ob.sent_at).toLocaleString()) : ''}. Submission ID <span class="mono">${esc(ob.result?.submission_id || '—')}</span>.` : done ? 'Received by GlobalBQS.' : blocked ? esc(textFor(ob.last_error)) : navigator.onLine ? 'Sending… keep the app open.' : 'Waiting for signal. Keep the app on your device; it sends by itself. Opening the app ashore speeds it up.', done],
+      ['Submitted', sent ? `Received ${ob.sent_at ? 'at ' + esc(new Date(ob.sent_at).toLocaleString()) : ''}. Submission ID <span class="mono">${esc(ob.result?.submission_id || '—')}</span>.` : done ? 'Received by GlobalBQS.' : blocked ? esc(textFor(ob.last_error)) : noSession ? 'Not signed in on this device – sign in again to send it.' : navigator.onLine ? 'Sending… keep the app open.' : 'Waiting for signal. Keep the app on your device; it sends by itself. Opening the app ashore speeds it up.', done],
       ['Draft report e-mailed to you', stg === 'correction' ? 'You requested a correction. GlobalBQS is handling it.' : 'We e-mail you the draft report within a few minutes. Check it and tap <b>Approve</b>, or request a correction.', done && at('awaiting_confirmation')],
       ['Confirmed by you', 'The report is issued to the client only after your confirmation.', done && at('approved')],
       ['Report issued to the client', 'GlobalBQS issues the report to the client.', done && at('issued')],
@@ -675,6 +687,7 @@ V.status = async (id) => {
       ${done ? reviewNote(stg) : ''}
       ${sent ? note('ok', `<b>Received by GlobalBQS.</b> Submission ID <span class="mono">${esc(ob.result?.submission_id || '')}</span>.${ob.result?.duplicate ? ' (already received earlier)' : ''}`)
         : blocked ? note('bad', `<b>${esc(textFor(ob.last_error))}</b>`)
+        : noSession ? note('warn', `<b>Sign in again to send.</b> You are no longer signed in on this device, so the survey cannot be sent yet. It is safe here – do not clear the browser. Sign in with the job link (code by e-mail); it sends by itself afterwards.${j.token ? `<button class="btn primary block" type="button" data-go="#/j/${esc(j.token)}" style="margin-top:10px">Sign in to send</button>` : ''}`)
         : note('warn', '<b>Not sent yet.</b> Everything is safe on this device. Do not delete the app or clear the browser until it shows Submitted.')}
       ${!ob && !done ? note('info', 'No submission on this device.') : ''}
       <div class="card"><ol class="tl">${steps.map((x, i) => `<li class="${x[2] ? 'done' : i === now ? 'now' : ''}"><span class="d">${x[2] ? '✓' : ''}</span><div><b>${x[0]}</b><span>${x[1]}</span></div></li>`).join('')}</ol></div>
@@ -683,18 +696,28 @@ V.status = async (id) => {
         <ul class="ob" id="obList"><li><span>Survey data and figures<small>${(JSON.stringify(ob.payload).length / 1024).toFixed(1)} kB</small></span>${sent ? '<span class="pill ok">Sent</span>' : '<span class="pill warn">Waiting</span>'}</li>
         ${files.map((f) => `<li data-file="${esc(f.id)}"><span>${esc(f.label || f.kind)}<small>${((f.size || 0) / 1048576).toFixed(2)} MB${(f.status === 'error' || f.status === 'lost') && f.error_text ? ' · ' + esc(f.error_text) : ''}</small></span>${pill(f)}</li>`).join('')}</ul>
         ${failing.length && !sent ? note('warn', `<b>${failing.length} file${failing.length > 1 ? 's' : ''} could not be uploaded yet.</b> The app keeps trying by itself. Tap <b>Send now</b> to retry immediately; if it keeps failing, contact GlobalBQS operations – your survey stays safe on this device.`) : ''}
-        ${!sent && !blocked ? `<button class="btn ghost block" type="button" id="sendNow" ${navigator.onLine ? '' : 'disabled'}>Send now</button>` : ''}</div>` : ''}
+        ${!sent && !blocked && !noSession ? `<button class="btn ghost block" type="button" id="sendNow" ${navigator.onLine ? '' : 'disabled'}>Send now</button>` : ''}</div>` : ''}
       ${note('info', 'Job cancelled by the client while you were offline? Your submission will still be received and checked by ops. You do not need to do anything.')}
       <button class="btn primary block" type="button" data-go="#/">Back to my jobs</button>
     </div>`);
     const sn = $('#sendNow'); if (sn) sn.onclick = () => { sn.disabled = true; sync.processOutbox(id, { force: true }); };
   };
   await render();
-  refreshReview(id).then((changed) => { if (changed) render(); });
+  // keep the report status current while this screen is open (every 20 s while visible, and on return to the app/tab)
+  let polling = false;
+  const poll = async () => {
+    if (polling || document.visibilityState !== 'visible') return;
+    polling = true;
+    try { const j = await db.get('jobs', id); if (j && j.review !== 'issued' && (await refreshReview(id))) render(); } finally { polling = false; }
+  };
+  poll();
+  const pt = setInterval(poll, 20000);
+  const onVis = () => { if (document.visibilityState === 'visible') poll(); };
+  document.addEventListener('visibilitychange', onVis); addEventListener('focus', onVis); addEventListener('online', onVis);
   let t = null;
-  const re = (e) => { if (e.detail && e.detail.jobId && e.detail.jobId !== id) return; clearTimeout(t); t = setTimeout(render, 120); };
+  const re = (e) => { if (e.detail && e.detail.jobId && e.detail.jobId !== id) return; clearTimeout(t); t = setTimeout(() => { render(); poll(); }, 120); };
   sync.bus.addEventListener('outbox', re); sync.bus.addEventListener('files', re); sync.bus.addEventListener('net', re);
-  cleanup = () => { sync.bus.removeEventListener('outbox', re); sync.bus.removeEventListener('files', re); sync.bus.removeEventListener('net', re); };
+  cleanup = () => { clearInterval(pt); document.removeEventListener('visibilitychange', onVis); removeEventListener('focus', onVis); removeEventListener('online', onVis); sync.bus.removeEventListener('outbox', re); sync.bus.removeEventListener('files', re); sync.bus.removeEventListener('net', re); };
   if (navigator.onLine) sync.processOutbox(id, { force: true });
 };
 
@@ -704,6 +727,7 @@ async function route() {
   const h = location.hash.replace(/^#/, '') || '/';
   let m;
   try {
+    if ((m = /^\/j\/([0-9a-fA-F]{64})\/pc\/(\d{6})$/.exec(h))) { portalCodes.set(m[1].toLowerCase(), m[2]); location.replace('#/j/' + m[1].toLowerCase()); return; }
     if ((m = /^\/j\/([0-9a-fA-F]{64})\/?$/.exec(h))) return await V.link(m[1]);
     if ((m = /^\/install\/([0-9a-f]{64})$/.exec(h))) return await V.install(m[1]);
     if ((m = /^\/signin\/([0-9a-f]{64})$/.exec(h))) return await V.signin(m[1]);
